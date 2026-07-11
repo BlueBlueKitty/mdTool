@@ -35,6 +35,7 @@ export class TextHistory {
   }
   undo(text: string): { text: string; transaction?: EditTransaction } { const transaction = this.undoStack.pop(); if (!transaction) return { text }; this.redoStack.push(transaction); return { text: transaction.before, transaction }; }
   redo(text: string): { text: string; transaction?: EditTransaction } { const transaction = this.redoStack.pop(); if (!transaction) return { text }; this.undoStack.push(transaction); return { text: transaction.after, transaction }; }
+  undoTo(text: string, at: number): { text: string; transactions: EditTransaction[] } { const transactions: EditTransaction[] = []; while (this.undoStack.length && this.undoStack.at(-1)!.at >= at) { const result = this.undo(text); text = result.text; if (result.transaction) transactions.push(result.transaction); } return { text, transactions }; }
   list(): EditTransaction[] { return [...this.undoStack].reverse(); }
   clear() { this.undoStack = []; this.redoStack = []; }
   get canUndo() { return this.undoStack.length > 0; }

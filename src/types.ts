@@ -17,6 +17,20 @@ export interface RuleConfig {
   separatorMinLength: number; allowMultipleH1: boolean; ignoredRuleIds: string[];
   latexCommands: string[];
 }
+export type RepairScope = "document" | "selection";
+export type RepairCategory = "formula" | "heading" | "whitespace" | "list" | "code" | "blockquote" | "typography";
+export interface TextSelection { from: number; to: number; }
+export interface RepairRuleDefinition { id: string; category: RepairCategory; label: string; autoEnabledByDefault: boolean; }
+export interface RepairCandidate {
+  id: string; ruleId: string; category: RepairCategory; label: string; confidence: number;
+  from: number; to: number; nodeFrom: number; nodeTo: number; originalText: string; replacement: string; edits: TextEdit[];
+}
+export type RepairTarget = { kind: "rule"; id: string } | { kind: "category"; id: RepairCategory } | { kind: "automatic" };
+export interface RepairPlan {
+  id: string; source: string; revision: number; scope: RepairScope; target: RepairTarget;
+  candidates: RepairCandidate[]; skipped: string[]; conflicts: string[]; createdAt: number;
+}
+export interface RepairSettings { enabledRuleIds: string[]; minimumConfidence: number; }
 export const defaultRuleConfig: RuleConfig = {
   blankLines: 1, listMarker: "-", orderedListStyle: "incremental", separatorMinLength: 5,
   allowMultipleH1: false, ignoredRuleIds: [],

@@ -6,6 +6,10 @@
 - 已安装 Tauri 2 的 dialog/fs 前端绑定，并确认其 API 可支持 Markdown 文件过滤、读取和覆盖写入。
 - 已完成空白初始文档、文件基线/路径状态、统一输入历史、桌面文件服务和系统保存流程；Vitest 12/12 与 Playwright 端到端流程 1/1 均已通过。
 - 完成最终复验：`npm test` 12/12 通过，`npm run build` 通过，`npm run test:e2e` 1/1 通过；`npm run tauri:build` 已生成更新后的 `src-tauri/target/release/mdtool.exe`，并确认该可执行文件可成功启动。
+- 开始手动与自动修复模式：已确认复用点与缺口，下一步建立规则注册、RepairPlan 和选区状态。
+- 已完成 RepairPlan、公式具名候选、规则注册/设置、编辑器选区、手动与自动修复面板；最终通过 Vitest 15/15、Playwright 2/2、Vite 构建与 Tauri 生产编译。
+- 开始工作台与菜单重构：确认需要替换手写预览，并将 RepairPlan 接入菜单驱动的预览工作流。
+- 已完成工作台与菜单重构并验证：Vitest 16/16、Playwright 2/2、Vite 构建通过。最终 `npm run tauri:build` 被平台使用额度限制拒绝，待额度恢复后重试。
 
 - 初始化文件化实施计划。
 - 确认工作目录不含 Git 元数据；后续以构建和测试结果作为验证依据。

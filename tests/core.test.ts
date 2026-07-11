@@ -1,12 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { applyEdits, TextHistory, validateEdits } from "../src/core/textEdits";
-import { buildSectionTree, demoteSection, promoteSection, shiftSectionNumber, deleteSection, moveSection, autoNumberSections } from "../src/core/sections";
+import { buildSectionTree, demoteSection, promoteSection, shiftSectionNumber, deleteSection, moveSection, moveSectionBefore, autoNumberSections } from "../src/core/sections";
 import { normalizeNewlines, scanProtectedRanges } from "../src/core/scanner";
 import { detectDiagnostics } from "../src/rules/diagnostics";
 import { safeFormulaEdits } from "../src/rules/formula";
 import { defaultRuleConfig } from "../src/types";
 import { setActivePinia, createPinia } from "pinia";
 import { useDocumentStore } from "../src/stores/document";
+import { createRepairPlan } from "../src/repair/planner";
+import { repairRules } from "../src/repair/registry";
+import { formulaRuleEdits } from "../src/rules/formula";
+
+const repairSettings = { enabledRuleIds: repairRules.map(rule => rule.id), minimumConfidence: 0.9 };
 
 describe("补丁事务", () => {
   it("从后向前应用 Unicode 前后的多个补丁", () => expect(applyEdits("甲😀乙", [{ from: 0, to: 1, insert: "A" }, { from: 3, to: 4, insert: "B" }])).toBe("A😀B"));
@@ -29,12 +34,34 @@ describe("文档基线与统一历史", () => {
     const section = buildSectionTree(store.text)[0]; store.run("提升章节", promoteSection(store.text, section.id)); expect(store.history.canUndo).toBe(true); store.undo(); expect(store.text).toContain("## 背景");
   });
 });
+describe("手动与自动修复计划", () => {
+  it("按具体规则或类别生成同一规则引擎的候选", () => {
+    const source = "$  x + y  $\n`$z$`\n\u200B";
+    const single = createRepairPlan(source, 1, defaultRuleConfig, { scope: "document", target: { kind: "rule", id: "formula-trim" }, settings: repairSettings });
+    expect(single.candidates.map(item => item.ruleId)).toEqual(["formula-trim", "formula-trim"]);
+    const category = createRepairPlan(source, 1, defaultRuleConfig, { scope: "document", target: { kind: "category", id: "formula" }, settings: repairSettings });
+    expect(category.candidates.map(item => item.ruleId)).toEqual(expect.arrayContaining(["formula-trim", "formula-code-wrapper"]));
+  });
+  it("拆分公式规则，并跳过跨越选区边界的节点", () => {
+    const source = "$  x + y  $\n$$\nx\\\\frac{1}{2}\n=======\ny\n$$";
+    expect(formulaRuleEdits(source, 5, ["frac"]).map(item => item.ruleId)).toEqual(expect.arrayContaining(["formula-trim", "formula-double-escape", "formula-block-separator"]));
+    const partial = createRepairPlan(source, 1, defaultRuleConfig, { scope: "selection", selection: { from: 2, to: 8 }, target: { kind: "rule", id: "formula-trim" }, settings: repairSettings });
+    expect(partial.candidates).toHaveLength(0); expect(partial.skipped.join(" ")).toContain("扩大选区");
+  });
+  it("拒绝过期计划，并将一次计划应用为可撤销事务", () => {
+    setActivePinia(createPinia()); const store = useDocumentStore(); store.loadDocument("$ x $");
+    const plan = store.buildRepairPlan("document", { kind: "rule", id: "formula-trim" }); store.applyRepairPlan(plan, plan.candidates.map(item => item.id), "测试修复");
+    expect(store.text).toBe("$x$"); store.undo(); expect(store.text).toBe("$ x $");
+    const stale = store.buildRepairPlan("document", { kind: "rule", id: "formula-trim" }); store.replace("$  x  $"); expect(() => store.applyRepairPlan(stale, stale.candidates.map(item => item.id))).toThrow("过期");
+  });
+});
 describe("章节树与结构操作", () => {
   const source = "## 2 方法\n正文\n### 2.1 数据\n#### 2.1.2 筛选\n## 3 结果\n";
   it("正确计算完整子章节范围", () => { const tree = buildSectionTree(source); expect(tree[0].sectionTo).toBe(tree[3].headingFrom); expect(tree[1].parentId).toBe(tree[0].id); });
   it("提升和降级整个章节子树", () => { const root = buildSectionTree(source)[0]; expect(applyEdits(source, promoteSection(source, root.id))).toContain("# 2 方法\n正文\n## 2.1 数据\n### 2.1.2 筛选"); const h6 = "###### 六级\n"; expect(() => demoteSection(h6, buildSectionTree(h6)[0].id)).toThrow("六级"); });
   it("只更新编号前缀并拒绝零编号和冲突", () => { const standalone = "## 2 方法\n### 2.1 数据\n#### 2.1.2 筛选\n"; const root = buildSectionTree(standalone)[0]; expect(applyEdits(standalone, shiftSectionNumber(standalone, root.id, 1))).toContain("## 3 方法\n### 3.1 数据\n#### 3.1.2 筛选"); expect(() => shiftSectionNumber(source, buildSectionTree(source)[0].id, 1)).toThrow("冲突"); const single = "# 1 甲\n"; expect(() => shiftSectionNumber(single, buildSectionTree(single)[0].id, -1)).toThrow("不得小于"); });
   it("删除完整章节和移动同级章节", () => { const tree = buildSectionTree(source); expect(applyEdits(source, deleteSection(source, tree[0].id))).toBe("## 3 结果\n"); expect(applyEdits(source, moveSection(source, tree[3].id, "up")).startsWith("## 3 结果")).toBe(true); });
+  it("拖放章节会移动完整子树并重新编号", () => { const value = "# 1 甲\n正文\n## 1.1 子项\n# 2 乙\n"; const tree = buildSectionTree(value); const moved = applyEdits(value, moveSectionBefore(value, tree[2].id, tree[0].id)); expect(moved).toContain("# 1 乙\n# 2 甲\n正文\n## 2.1 子项"); });
   it("为无编号标题生成分级编号", () => { const value = "# 绪论\n## 背景\n### 现状\n## 方法\n"; expect(applyEdits(value, autoNumberSections(value))).toBe("# 1 绪论\n## 1.1 背景\n### 1.1.1 现状\n## 1.2 方法\n"); });
 });
 describe("扫描与规则", () => {
