@@ -1,0 +1,16 @@
+[package]
+name = "mdtool"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "mdtool_lib"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }

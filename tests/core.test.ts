@@ -1,0 +1,44 @@
+import { describe, expect, it } from "vitest";
+import { applyEdits, TextHistory, validateEdits } from "../src/core/textEdits";
+import { buildSectionTree, demoteSection, promoteSection, shiftSectionNumber, deleteSection, moveSection, autoNumberSections } from "../src/core/sections";
+import { normalizeNewlines, scanProtectedRanges } from "../src/core/scanner";
+import { detectDiagnostics } from "../src/rules/diagnostics";
+import { safeFormulaEdits } from "../src/rules/formula";
+import { defaultRuleConfig } from "../src/types";
+import { setActivePinia, createPinia } from "pinia";
+import { useDocumentStore } from "../src/stores/document";
+
+describe("补丁事务", () => {
+  it("从后向前应用 Unicode 前后的多个补丁", () => expect(applyEdits("甲😀乙", [{ from: 0, to: 1, insert: "A" }, { from: 3, to: 4, insert: "B" }])).toBe("A😀B"));
+  it("拒绝重叠补丁并支持整体撤销重做", () => { expect(validateEdits("abcd", [{ from: 0, to: 2, insert: "x" }, { from: 1, to: 3, insert: "y" }])).toHaveLength(1); const history = new TextHistory(); const result = history.apply("abcd", "修复", [{ from: 0, to: 4, insert: "ok" }]); expect(history.undo(result.text).text).toBe("abcd"); expect(history.redo("abcd").text).toBe("ok"); });
+});
+describe("文档基线与统一历史", () => {
+  it("以空白文档启动，并在载入或粘贴时重置基线和历史", () => {
+    setActivePinia(createPinia()); const store = useDocumentStore();
+    expect(store.text).toBe(""); expect(store.fileName).toBe("未命名.md"); expect(store.dirty).toBe(false);
+    store.replace("# 草稿"); expect(store.dirty).toBe(true); expect(store.history.canUndo).toBe(true);
+    store.loadDocument("# 文件", { fileName: "报告.md", filePath: "C:\\docs\\报告.md" });
+    expect(store.text).toBe("# 文件"); expect(store.baseline).toBe("# 文件"); expect(store.fileName).toBe("报告.md"); expect(store.dirty).toBe(false); expect(store.history.canUndo).toBe(false);
+    store.replace("# 文件\n正文"); store.loadPastedDocument("# 粘贴源码");
+    expect(store.text).toBe("# 粘贴源码"); expect(store.baseline).toBe("# 粘贴源码"); expect(store.filePath).toBeNull(); expect(store.history.canUndo).toBe(false);
+  });
+  it("记录编辑和结构修复，保存后仍可撤销并恢复未保存状态", () => {
+    setActivePinia(createPinia()); const store = useDocumentStore(); store.loadDocument("## 背景");
+    store.replace("## 背景\n正文"); expect(store.dirty).toBe(true); store.markSaved("C:\\docs\\报告.md", "报告.md");
+    expect(store.dirty).toBe(false); store.undo(); expect(store.text).toBe("## 背景"); expect(store.dirty).toBe(true); store.redo(); expect(store.text).toBe("## 背景\n正文"); expect(store.dirty).toBe(false);
+    const section = buildSectionTree(store.text)[0]; store.run("提升章节", promoteSection(store.text, section.id)); expect(store.history.canUndo).toBe(true); store.undo(); expect(store.text).toContain("## 背景");
+  });
+});
+describe("章节树与结构操作", () => {
+  const source = "## 2 方法\n正文\n### 2.1 数据\n#### 2.1.2 筛选\n## 3 结果\n";
+  it("正确计算完整子章节范围", () => { const tree = buildSectionTree(source); expect(tree[0].sectionTo).toBe(tree[3].headingFrom); expect(tree[1].parentId).toBe(tree[0].id); });
+  it("提升和降级整个章节子树", () => { const root = buildSectionTree(source)[0]; expect(applyEdits(source, promoteSection(source, root.id))).toContain("# 2 方法\n正文\n## 2.1 数据\n### 2.1.2 筛选"); const h6 = "###### 六级\n"; expect(() => demoteSection(h6, buildSectionTree(h6)[0].id)).toThrow("六级"); });
+  it("只更新编号前缀并拒绝零编号和冲突", () => { const standalone = "## 2 方法\n### 2.1 数据\n#### 2.1.2 筛选\n"; const root = buildSectionTree(standalone)[0]; expect(applyEdits(standalone, shiftSectionNumber(standalone, root.id, 1))).toContain("## 3 方法\n### 3.1 数据\n#### 3.1.2 筛选"); expect(() => shiftSectionNumber(source, buildSectionTree(source)[0].id, 1)).toThrow("冲突"); const single = "# 1 甲\n"; expect(() => shiftSectionNumber(single, buildSectionTree(single)[0].id, -1)).toThrow("不得小于"); });
+  it("删除完整章节和移动同级章节", () => { const tree = buildSectionTree(source); expect(applyEdits(source, deleteSection(source, tree[0].id))).toBe("## 3 结果\n"); expect(applyEdits(source, moveSection(source, tree[3].id, "up")).startsWith("## 3 结果")).toBe(true); });
+  it("为无编号标题生成分级编号", () => { const value = "# 绪论\n## 背景\n### 现状\n## 方法\n"; expect(applyEdits(value, autoNumberSections(value))).toBe("# 1 绪论\n## 1.1 背景\n### 1.1.1 现状\n## 1.2 方法\n"); });
+});
+describe("扫描与规则", () => {
+  it("统一换行并识别保护区", () => { const text = "---\r\na: b\r\n---\r\n`$HOME`\r\n```\r\n$x$\r\n```"; expect(normalizeNewlines(text)).not.toContain("\r"); expect(scanProtectedRanges(normalizeNewlines(text)).map(item => item.type)).toEqual(expect.arrayContaining(["frontmatter", "inline-code", "fenced-code"])); });
+  it("安全公式修复不会动金额或围栏代码，并解除纯公式代码标记", () => { const source = "$  x + y  $\n$100\n`$ x $`\n```\n$ x $\n```\n$$\nx\\\\frac{1}{2}\n========\ny\n$$"; const output = applyEdits(source, safeFormulaEdits(source, 5, ["frac"])); expect(output).toContain("$x + y$"); expect(output).toContain("$100"); expect(output).toContain("\n$ x $\n```"); expect(output).toContain("```\n$ x $\n```"); expect(output).toContain("x\\frac{1}{2}\ny"); });
+  it("报告标题、公式、围栏和不可见字符问题", () => { const source = "# A\n### 跳级\n$  x + y  $\n\u200B\n```js\n"; const ids = detectDiagnostics(source, defaultRuleConfig).map(item => item.ruleId); expect(ids).toEqual(expect.arrayContaining(["heading-level-jump", "formula-trim", "invisible-character", "unclosed-fence"])); });
+});

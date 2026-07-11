@@ -1,0 +1,1 @@
+{"default":{"identifier":"default","description":"允许 mdTool 通过用户选择的文件路径打开、保存 Markdown 文件。","local":true,"windows":["main"],"permissions":["core:default","dialog:default","fs:default"]}}

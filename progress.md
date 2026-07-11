@@ -1,0 +1,25 @@
+# 执行记录
+
+## 2026-07-11
+
+- 开始桌面文件工作流改造：已确认 Tauri Rust 插件已存在，前端需要接入文件对话框、文件读写及统一历史。
+- 已安装 Tauri 2 的 dialog/fs 前端绑定，并确认其 API 可支持 Markdown 文件过滤、读取和覆盖写入。
+- 已完成空白初始文档、文件基线/路径状态、统一输入历史、桌面文件服务和系统保存流程；Vitest 12/12 与 Playwright 端到端流程 1/1 均已通过。
+- 完成最终复验：`npm test` 12/12 通过，`npm run build` 通过，`npm run test:e2e` 1/1 通过；`npm run tauri:build` 已生成更新后的 `src-tauri/target/release/mdtool.exe`，并确认该可执行文件可成功启动。
+
+- 初始化文件化实施计划。
+- 确认工作目录不含 Git 元数据；后续以构建和测试结果作为验证依据。
+- 已完整读取主需求文档并确认当前项目尚未初始化，下一步将建立可测试的应用骨架与核心领域模块。
+- 已完成需求拆解：以 TypeScript 核心领域服务覆盖功能，再由 Vue + CodeMirror 界面调用；测试以 Vitest 核心规则和补丁事务为主。
+- 已创建 Vue 3 + Vite + TypeScript 项目，接入 Pinia、CodeMirror 6、jsdiff、Zod 和 Tauri 2 项目配置。
+- 已实现核心的局部文本补丁/冲突检测/事务历史、标题树及结构操作、保护区扫描、公式安全修复、诊断规则和三栏工作台。
+- 已加入 Vitest 单元测试与 Playwright 端到端测试，等待安装依赖后运行。
+- `npm install` 首次因受限环境无法写入用户缓存而失败；经授权在常规系统环境中重试后已成功安装 127 个包。首次 Vitest 执行发现两个测试断言与产品规则不一致，正在修正后复验。
+- 第二次测试确认生产构建成功；另发现块公式修复被过宽的保护区重叠判断阻止，已将围栏扫描改为逐行状态机，并限制块公式只因真正受保护区域跳过。
+- Vitest 现为 10/10 通过；`vue-tsc --noEmit && vite build` 已通过。Vite 仅报告主包约 587 KB 的性能建议，不影响构建正确性。
+- Playwright 初次执行因浏览器二进制未安装而失败；已经授权下载 Chromium。随后执行真实交互测试，发现测试错误地选择了一级标题进行“提升”（该操作按需求应被禁止）；已改为选择二级标题，准备复测。
+- Playwright 复测长时间未启动用例。已定位为 `webServer` 命令将 `--host 127.0.0.1` 错误传给 npm/Vite，实际仅监听 localhost，导致其等待 127.0.0.1 超时；已改为 `--host=127.0.0.1`。
+- 该环境下 Playwright 的内置 `webServer` 子进程未能正常回收，导致测试命令挂起。已改为由测试前显式启动的 Vite 实例提供服务，避免将服务器生命周期与测试进程绑定。
+- 最终验证完成：Vitest 10/10 通过；TypeScript 检查与 Vite 生产构建通过；Playwright 端到端流程 1/1 通过。Playwright 测试服务器由临时 PowerShell Job 启动并已停止。
+- 已将 PowerShell Job 生命周期封装至 `scripts/run-e2e.ps1`，因此 `npm run test:e2e` 可独立运行并在结束时清理 Vite 服务器。
+- 最终复验：`npm run test:e2e` 已独立通过（1/1）。

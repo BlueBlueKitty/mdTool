@@ -1,0 +1,38 @@
+{
+  "name": "mdtool",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-tauri.ps1",
+    "build": "vue-tsc --noEmit && vite build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-e2e.ps1"
+  },
+  "dependencies": {
+    "@codemirror/commands": "^6.8.1",
+    "@codemirror/lang-markdown": "^6.3.2",
+    "@codemirror/state": "^6.5.2",
+    "@codemirror/view": "^6.36.5",
+    "@tauri-apps/plugin-dialog": "^2.7.1",
+    "@tauri-apps/plugin-fs": "^2.5.1",
+    "diff": "^7.0.0",
+    "pinia": "^3.0.1",
+    "vue": "^3.5.13",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.51.1",
+    "@tauri-apps/cli": "^2.11.4",
+    "@types/node": "^22.13.5",
+    "@vitejs/plugin-vue": "^5.2.3",
+    "typescript": "^5.7.3",
+    "vite": "^6.1.0",
+    "vitest": "^3.0.5",
+    "vue-tsc": "^2.2.0"
+  }
+}
