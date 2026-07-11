@@ -52,3 +52,14 @@
 - 现有 RepairPlan 可作为中间“修复预览”与左侧修复项的唯一来源，无需新增规则引擎。
 - 已完成 Markdown-It 与浏览器 MathJax ES5 组件渲染、菜单式三栏工作台、命名方案、章节跳转/右键/拖拽和滚动同步；Vitest 16/16、Playwright 2/2、Vite 构建通过。
 - `mathjax-full` 的 Node API 在浏览器出现 `require is not defined`；已改用动态加载的 ES5 浏览器组件入口解决。最终 Tauri 打包因平台额度限制未能执行。
+
+## 2026-07-11 主题与可调工作台改造
+
+- `App.vue` 的深色配色、三栏列宽以及菜单水平位置均为硬编码；历史菜单以 `left:420px` 定位，无法相对撤销控件正确落位。
+- 当前 `MarkdownIt` 没有块级数学插件，必须在解析器中添加 `$$` 围栏规则，令整段 TeX 进入同一 MathJax 容器。
+
+## 2026-07-11 编辑器与桌面启动修复
+
+- `MarkdownEditor.vue` 将 CodeMirror 背景和文字颜色固定为深色，未使用应用主题变量；深色插入光标也没有显式颜色。
+- `main.rs` 缺少 Windows GUI subsystem 属性，发布的 Tauri 可执行程序会附带控制台窗口。
+- 当前 `jump()` 仅调用滚动定位；需要通过 CodeMirror decoration 临时标记目标文字范围。
