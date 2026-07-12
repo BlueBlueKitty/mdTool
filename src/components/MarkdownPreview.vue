@@ -4,6 +4,11 @@ import MarkdownIt from "markdown-it";
 const props = defineProps<{ modelValue: string }>(); const emit = defineEmits<{ scroll: [ratio: number] }>(); const root = ref<HTMLElement>(); const ready = ref(false);
 const md = new MarkdownIt({ html: false, linkify: true, breaks: false, typographer: true });
 md.renderer.rules.heading_open = (tokens, index, options, _env, self) => { const token = tokens[index]; if (token.map) token.attrSet("data-source-line", String(token.map[0] + 1)); return self.renderToken(tokens, index, options); };
+md.core.ruler.after("block", "source_line_anchors", state => {
+  for (const token of state.tokens) {
+    if (token.block && token.nesting === 1 && token.map && token.tag) token.attrSet("data-source-line", String(token.map[0] + 1));
+  }
+});
 // markdown-it does not parse MathJax's $$ delimiters by default. Keep the
 // whole fenced expression in one token so lines such as `Z(\\mathbf x)` can
 // never be interpreted as normal Markdown content.
@@ -26,12 +31,12 @@ md.block.ruler.before("fence", "math_block", (state, startLine, endLine, silent)
   state.line = closeLine + 1;
   return true;
 });
-md.renderer.rules.math_block = (tokens, index) => `<div class="math-block">$$\n${md.utils.escapeHtml(tokens[index].content)}$$</div>\n`;
+md.renderer.rules.math_block = (tokens, index) => `<div class="math-block" data-source-line="${tokens[index].map![0] + 1}">$$\n${md.utils.escapeHtml(tokens[index].content)}$$</div>\n`;
 const html = computed(() => md.render(props.modelValue));
 type MathJaxApi = { typesetClear?: (nodes?: HTMLElement[]) => void; typesetPromise?: (nodes?: HTMLElement[]) => Promise<void> };
 function mathJax() { return (window as Window & { MathJax?: MathJaxApi }).MathJax; }
 async function typeset() { await nextTick(); if (!ready.value || !root.value) return; const api = mathJax(); try { api?.typesetClear?.([root.value]); await api?.typesetPromise?.([root.value]); } catch { /* 保留原始 TeX，避免单个公式影响预览 */ } }
-function setScrollPosition(ratio: number, sourceLine?: number) { nextTick(() => { if (!root.value) return; const headings = [...root.value.querySelectorAll<HTMLElement>("[data-source-line]")]; const anchor = sourceLine === undefined ? undefined : headings.filter((heading) => Number(heading.dataset.sourceLine) <= sourceLine).at(-1); if (anchor) { root.value.scrollTop = Math.max(0, anchor.offsetTop - 24); return; } const max = Math.max(0, root.value.scrollHeight - root.value.clientHeight); root.value.scrollTop = Math.max(0, Math.min(1, ratio)) * max; }); }
+function setScrollPosition(ratio: number, sourceLine?: number) { nextTick(() => { if (!root.value) return; const anchors = [...root.value.querySelectorAll<HTMLElement>("[data-source-line]")]; const anchor = sourceLine === undefined ? undefined : anchors.filter((item) => Number(item.dataset.sourceLine) <= sourceLine).at(-1); if (anchor) { root.value.scrollTop = Math.max(0, anchor.offsetTop - 24); return; } const max = Math.max(0, root.value.scrollHeight - root.value.clientHeight); root.value.scrollTop = Math.max(0, Math.min(1, ratio)) * max; }); }
 defineExpose({ setScrollPosition }); function onScroll() { if (!root.value) return; const max = Math.max(1, root.value.scrollHeight - root.value.clientHeight); emit("scroll", root.value.scrollTop / max); }
 onMounted(async () => {
   // The ES5 bundle is cached after the first load. Replacing its global API on
