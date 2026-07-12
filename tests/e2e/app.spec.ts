@@ -21,8 +21,9 @@ test("全文添加编号先询问是否排除一级标题", async ({ page }) => 
 test("多行块级公式作为单个 MathJax 块渲染，不会生成标题", async ({ page }) => {
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await page.locator(".cm-content").click();
-  await page.keyboard.insertText("$$\nZ(\\mathbf x)\n=\n\\sum_m w_m(\\mathbf x)\n$$");
+  await page.keyboard.insertText("行内 $x^2 + y^2$\n\n$$\nZ(\\mathbf x)\n=\n\\sum_m w_m(\\mathbf x)\n-\n$$");
   await expect(page.locator(".preview .math-block")).toHaveCount(1);
+  await expect(page.locator(".preview mjx-container")).toHaveCount(2);
   await expect(page.locator(".preview h1, .preview h2, .preview h3")).toHaveCount(0);
 });
 

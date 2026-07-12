@@ -33,7 +33,16 @@ function mathJax() { return (window as Window & { MathJax?: MathJaxApi }).MathJa
 async function typeset() { await nextTick(); if (!ready.value || !root.value) return; const api = mathJax(); try { api?.typesetClear?.([root.value]); await api?.typesetPromise?.([root.value]); } catch { /* 保留原始 TeX，避免单个公式影响预览 */ } }
 function setScrollPosition(ratio: number, sourceLine?: number) { nextTick(() => { if (!root.value) return; const headings = [...root.value.querySelectorAll<HTMLElement>("[data-source-line]")]; const anchor = sourceLine === undefined ? undefined : headings.filter((heading) => Number(heading.dataset.sourceLine) <= sourceLine).at(-1); if (anchor) { root.value.scrollTop = Math.max(0, anchor.offsetTop - 24); return; } const max = Math.max(0, root.value.scrollHeight - root.value.clientHeight); root.value.scrollTop = Math.max(0, Math.min(1, ratio)) * max; }); }
 defineExpose({ setScrollPosition }); function onScroll() { if (!root.value) return; const max = Math.max(1, root.value.scrollHeight - root.value.clientHeight); emit("scroll", root.value.scrollTop / max); }
-onMounted(async () => { (window as Window & { MathJax?: unknown }).MathJax = { tex: { inlineMath: [["$", "$"], ["\\(", "\\)"]], displayMath: [["$$", "$$"], ["\\[", "\\]"]] }, chtml: { matchFontHeight: false } }; await import("mathjax-full/es5/tex-chtml.js"); ready.value = true; typeset(); }); watch(html, typeset);
+onMounted(async () => {
+  // The ES5 bundle is cached after the first load. Replacing its global API on
+  // a later mount (for example after Vite HMR) leaves no typesetPromise behind.
+  if (!mathJax()?.typesetPromise) {
+    (window as Window & { MathJax?: unknown }).MathJax = { tex: { inlineMath: [["$", "$"], ["\\(", "\\)"]], displayMath: [["$$", "$$"], ["\\[", "\\]"]] }, chtml: { matchFontHeight: false } };
+    await import("mathjax-full/es5/tex-chtml.js");
+  }
+  ready.value = true;
+  typeset();
+}); watch(html, typeset);
 </script>
 <template><article ref="root" class="preview" @scroll="onScroll" v-html="html" /></template>
 <style scoped>
