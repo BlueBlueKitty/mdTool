@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { applyEdits, TextHistory, validateEdits } from "../src/core/textEdits";
-import { buildSectionTree, demoteSection, promoteSection, shiftSectionNumber, deleteSection, moveSection, moveSectionBefore, autoNumberSections } from "../src/core/sections";
+import { buildSectionTree, demoteSection, promoteSection, shiftSectionNumber, deleteSection, moveSection, moveSectionBefore, autoNumberSections, renumberSections } from "../src/core/sections";
 import { normalizeNewlines, scanProtectedRanges } from "../src/core/scanner";
 import { detectDiagnostics } from "../src/rules/diagnostics";
 import { safeFormulaEdits } from "../src/rules/formula";
@@ -10,8 +10,9 @@ import { useDocumentStore } from "../src/stores/document";
 import { createRepairPlan } from "../src/repair/planner";
 import { repairRules } from "../src/repair/registry";
 import { formulaRuleEdits } from "../src/rules/formula";
+import { spacingRuleEdits } from "../src/rules/spacing";
 
-const repairSettings = { enabledRuleIds: repairRules.map(rule => rule.id), minimumConfidence: 0.9 };
+const repairSettings = { enabledRuleIds: repairRules.map(rule => rule.id), sectionNumberStartLevel: 1 as const };
 
 describe("补丁事务", () => {
   it("从后向前应用 Unicode 前后的多个补丁", () => expect(applyEdits("甲😀乙", [{ from: 0, to: 1, insert: "A" }, { from: 3, to: 4, insert: "B" }])).toBe("A😀B"));
@@ -63,9 +64,13 @@ describe("章节树与结构操作", () => {
   it("删除完整章节和移动同级章节", () => { const tree = buildSectionTree(source); expect(applyEdits(source, deleteSection(source, tree[0].id))).toBe("## 3 结果\n"); expect(applyEdits(source, moveSection(source, tree[3].id, "up")).startsWith("## 3 结果")).toBe(true); });
   it("拖放章节会移动完整子树并重新编号", () => { const value = "# 1 甲\n正文\n## 1.1 子项\n# 2 乙\n"; const tree = buildSectionTree(value); const moved = applyEdits(value, moveSectionBefore(value, tree[2].id, tree[0].id)); expect(moved).toContain("# 1 乙\n# 2 甲\n正文\n## 2.1 子项"); });
   it("为无编号标题生成分级编号", () => { const value = "# 绪论\n## 背景\n### 现状\n## 方法\n"; expect(applyEdits(value, autoNumberSections(value))).toBe("# 1 绪论\n## 1.1 背景\n### 1.1.1 现状\n## 1.2 方法\n"); });
+  it("可从二级标题开始编号并保留一级大标题", () => { const value = "# 总报告\n## 背景\n### 数据\n"; expect(applyEdits(value, autoNumberSections(value, 2))).toBe("# 总报告\n## 1 背景\n### 1.1 数据\n"); });
+  it("选中章节编号和重排只影响该章节及其子标题", () => { const value = "# 甲\n## 甲子\n# 乙\n## 乙子\n"; const second = buildSectionTree(value)[2]; expect(applyEdits(value, autoNumberSections(value, 1, second.id))).toBe("# 甲\n## 甲子\n# 1 乙\n## 1.1 乙子\n"); const numbered = "# 1 甲\n## 1.3 甲子\n# 2 乙\n## 2.5 乙子\n"; const numberedSecond = buildSectionTree(numbered)[2]; expect(applyEdits(numbered, renumberSections(numbered, numberedSecond.id))).toBe("# 1 甲\n## 1.3 甲子\n# 1 乙\n## 1.1 乙子\n"); });
 });
 describe("扫描与规则", () => {
   it("统一换行并识别保护区", () => { const text = "---\r\na: b\r\n---\r\n`$HOME`\r\n```\r\n$x$\r\n```"; expect(normalizeNewlines(text)).not.toContain("\r"); expect(scanProtectedRanges(normalizeNewlines(text)).map(item => item.type)).toEqual(expect.arrayContaining(["frontmatter", "inline-code", "fenced-code"])); });
   it("安全公式修复不会动金额或围栏代码，并解除纯公式代码标记", () => { const source = "$  x + y  $\n$100\n`$ x $`\n```\n$ x $\n```\n$$\nx\\\\frac{1}{2}\n========\ny\n$$"; const output = applyEdits(source, safeFormulaEdits(source, 5, ["frac"])); expect(output).toContain("$x + y$"); expect(output).toContain("$100"); expect(output).toContain("\n$ x $\n```"); expect(output).toContain("```\n$ x $\n```"); expect(output).toContain("x\\frac{1}{2}\ny"); });
+  it("按选择恢复、统一公式定界符，并排除普通括号", () => { const source = "(x+y=1)\n(2024)\n[\nx^2+y^2=1\n]\n$$z$$"; const ids = ["formula-restore-missing-delimiter", "formula-delimiter-dollar", "formula-inline-double-dollar-to-single", "formula-restore-separator"]; const output = applyEdits(source, formulaRuleEdits(source, 5, [], ids).filter(item => item.ruleId === "formula-restore-missing-delimiter").map(item => item.edit)); expect(output).toContain("$x+y=1$"); expect(output).toContain("$$x^2+y^2=1$$"); expect(output).toContain("(2024)"); expect(applyEdits("$a======b$", formulaRuleEdits("$a======b$", 5, [], ["formula-restore-separator"]).map(item => item.edit))).toBe("$a=b$"); });
+  it("中英文间距不触碰公式、代码和链接", () => { const source = "中文Markdown第2章20kg $x+y$ `中文Code` [中文Link](https://a.example/中文)"; const edits = spacingRuleEdits(source, ["spacing-cjk-latin", "spacing-cjk-number", "spacing-number-unit"]); const output = applyEdits(source, edits.map(item => item.edit)); expect(output).toContain("中文 Markdown 第 2 章 20 kg"); expect(output).toContain("$x+y$"); expect(output).toContain("`中文Code`"); expect(output).toContain("https://a.example/中文"); });
   it("报告标题、公式、围栏和不可见字符问题", () => { const source = "# A\n### 跳级\n$  x + y  $\n\u200B\n```js\n"; const ids = detectDiagnostics(source, defaultRuleConfig).map(item => item.ruleId); expect(ids).toEqual(expect.arrayContaining(["heading-level-jump", "formula-trim", "invisible-character", "unclosed-fence"])); });
 });

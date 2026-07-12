@@ -9,6 +9,8 @@ import {
   categoryLabels,
   repairRules,
   rulesForCategory,
+  mutuallyExclusiveRules,
+  ruleDescriptions,
 } from "./repair/registry";
 import { editsForPlan } from "./repair/planner";
 import {
@@ -41,9 +43,8 @@ const sourceEditor = ref<{
 const repairEditor = ref<{ setScrollRatio: (r: number) => void }>();
 const preview = ref<{ setScrollRatio: (r: number) => void }>();
 const diffRoot = ref<HTMLElement>();
-const menu = ref<"file" | "repair" | "history" | null>(null);
+const menu = ref<"file" | "formula" | "other" | "history" | null>(null);
 const settingsOpen = ref(false);
-const settingsTab = ref<"rules" | "profiles">("rules");
 const context = ref<{ id: string; x: number; y: number }>();
 const dragging = ref<string>();
 const lastPreview = ref<"source" | "repair">("source");
@@ -64,6 +65,7 @@ const selectedPlanIds = ref<string[]>(
   currentPlan.value.candidates.map((item) => item.id),
 );
 const pendingManual = ref<{ selection: RepairPlan; full: RepairPlan }>();
+const pendingFullNumbering = ref(false);
 const repairText = computed(() =>
   store.preview(editsForPlan(currentPlan.value, selectedPlanIds.value)),
 );
@@ -73,32 +75,44 @@ const previewText = computed(() =>
 );
 const issues = computed(() => currentPlan.value.candidates);
 const categories = Object.keys(categoryLabels) as RepairCategory[];
+const issueGroups = computed(() => categories.map((category) => ({ category, rules: rulesForCategory(category).map((rule) => ({ rule, items: issues.value.filter((item) => item.ruleId === rule.id) })).filter((group) => group.items.length) })).filter((group) => group.rules.length));
+const expandedIssueCategories = ref<Record<string, boolean>>({});
+const expandedIssueRules = ref<Record<string, boolean>>({});
 const workspaceStyle = computed(() => ({
   gridTemplateColumns: `${leftCollapsed.value ? 32 : leftWidth.value}px minmax(360px,1fr) ${rightCollapsed.value ? 32 : rightWidth.value}px`,
 }));
 const expandedCategories = ref<Record<string, boolean>>(
   Object.fromEntries(categories.map((category) => [category, true])),
 );
+const collapsedSections = ref(new Set<string>());
+const sectionRows = computed(() => {
+  const rows: (typeof store.sections[number])[] = [];
+  const visit = (node: typeof store.sections[number]) => { rows.push(node); if (!collapsedSections.value.has(node.id)) node.children.forEach(visit); };
+  store.sections.filter((node) => !node.parentId).forEach(visit);
+  return rows;
+});
 const examples: Record<string, string> = {
   "formula-trim": "$  x + y  $ → $x + y$",
   "formula-double-escape": "$\\\\alpha$ → $\\alpha$",
   "formula-block-separator": "$$\\na+b\\n-----\\n$$ → $$\\na+b\\n$$",
+  "formula-restore-separator": "a======b → a=b",
+  "formula-delimiter-latex": "$x+y$ → \\(x+y\\)",
+  "formula-delimiter-dollar": "\\[x+y\\] → $$x+y$$",
+  "formula-display-dollar-to-single": "$$\\nx+y\\n$$ → $x+y$",
+  "formula-inline-double-dollar-to-single": "文本 $$x+y$$ → 文本 $x+y$",
+  "formula-restore-missing-delimiter": "(x+y=1) → \\(x+y=1\\)",
+  "spacing-cjk-latin": "中文Markdown → 中文 Markdown",
+  "spacing-cjk-number": "第2章 → 第 2 章",
+  "spacing-number-unit": "20kg → 20 kg",
+  "section-auto-number": "## 方法 → ## 1.1 方法",
   "formula-code-wrapper": "`$E=mc^2$` → $E=mc^2$",
   "formula-block-normalize": "$$\\n  x^2 + y^2  \\n$$ → $$\\nx^2 + y^2\\n$$",
-  "heading-space": "##标题 → ## 标题",
-  "trailing-whitespace": "文本··· → 文本",
-  "extra-blank-line": "段落后四个空行 → 保留一个空行",
-  "list-marker": "* 项目 → - 项目",
-  "ordered-list-number": "1. 一\n1. 二 → 1. 一\n2. 二",
-  "markdown-wrapper-fence": "```markdown ... ``` → 移除外层围栏",
-  "blockquote-space": ">引用 → > 引用",
-  "invisible-character": "研究​结果 → 研究结果",
 };
 interface Profile {
   id: string;
   name: string;
   enabledRuleIds: string[];
-  minimumConfidence: number;
+  sectionNumberStartLevel: 1 | 2;
   builtIn?: boolean;
 }
 const profileKey = "mdtool.repair-profiles.v1";
@@ -118,7 +132,7 @@ function loadProfiles(): Profile[] {
       id: "default",
       name: "默认安全方案",
       enabledRuleIds: [...store.repairSettings.enabledRuleIds],
-      minimumConfidence: store.repairSettings.minimumConfidence,
+      sectionNumberStartLevel: store.repairSettings.sectionNumberStartLevel,
       builtIn: true,
     },
   ];
@@ -159,7 +173,7 @@ function activateProfile(id: string) {
   activeProfileId.value = id;
   store.updateRepairSettings({
     enabledRuleIds: profile.enabledRuleIds,
-    minimumConfidence: profile.minimumConfidence,
+    sectionNumberStartLevel: profile.sectionNumberStartLevel,
   });
   refreshAutomatic();
 }
@@ -172,13 +186,13 @@ function saveProfile() {
   if (current && !current.builtIn) {
     current.name = name;
     current.enabledRuleIds = [...store.repairSettings.enabledRuleIds];
-    current.minimumConfidence = store.repairSettings.minimumConfidence;
+    current.sectionNumberStartLevel = store.repairSettings.sectionNumberStartLevel;
   } else {
     const profile = {
       id: `profile-${Date.now()}`,
       name,
       enabledRuleIds: [...store.repairSettings.enabledRuleIds],
-      minimumConfidence: store.repairSettings.minimumConfidence,
+      sectionNumberStartLevel: store.repairSettings.sectionNumberStartLevel,
     };
     profiles.value.push(profile);
     activeProfileId.value = profile.id;
@@ -197,6 +211,7 @@ function deleteProfile() {
 function toggleRule(id: string, checked: boolean) {
   const ids = new Set(store.repairSettings.enabledRuleIds);
   checked ? ids.add(id) : ids.delete(id);
+  if (checked) mutuallyExclusiveRules.filter((group) => group.includes(id as never)).forEach((group) => group.filter((item) => item !== id).forEach((item) => ids.delete(item)));
   store.updateRepairSettings({
     ...store.repairSettings,
     enabledRuleIds: [...ids],
@@ -210,6 +225,15 @@ function toggleRule(id: string, checked: boolean) {
   }
   refreshAutomatic();
 }
+function isExclusiveRule(id: string) { return mutuallyExclusiveRules.some((group) => group.includes(id as never)); }
+function setSectionNumberStartLevel(level: 1 | 2) { store.updateRepairSettings({ ...store.repairSettings, sectionNumberStartLevel: level }); refreshAutomatic(); }
+function requestFullNumbering() { pendingFullNumbering.value = true; menu.value = null; }
+function confirmFullNumbering() { pendingFullNumbering.value = false; const plan = store.buildRepairPlan("document", { kind: "rule", id: "section-auto-number" }); currentPlan.value = plan; selectedPlanIds.value = plan.candidates.map((item) => item.id); selectCenter("repair"); }
+function selectSection(id: string) { const section = store.sections.find((item) => item.id === id); if (!section) return; store.selectedSectionId = id; jump(section.headingFrom, section.headingTo); }
+function toggleSection(id: string) { const next = new Set(collapsedSections.value); next.has(id) ? next.delete(id) : next.add(id); collapsedSections.value = next; }
+function openSectionContext(id: string, event: MouseEvent) { store.selectedSectionId = id; context.value = { id, x: event.clientX, y: event.clientY }; }
+function toggleIssueCategory(category: RepairCategory) { expandedIssueCategories.value[category] = !expandedIssueCategories.value[category]; }
+function toggleIssueRule(id: string) { expandedIssueRules.value[id] = !expandedIssueRules.value[id]; }
 function refreshAutomatic() {
   currentPlan.value = store.buildRepairPlan("document", { kind: "automatic" });
   selectedPlanIds.value = currentPlan.value.candidates.map((item) => item.id);
@@ -384,29 +408,11 @@ onBeforeUnmount(() => {
             ><button @click="saveDocument(true)">另存为</button>
           </div>
         </div>
-        <div class="menu-anchor">
-          <button @click="menu = menu === 'repair' ? null : 'repair'">
-            修复规则
-          </button>
-          <div v-if="menu === 'repair'" class="dropdown repair-menu">
-            <section v-for="category in categories" :key="category">
-              <strong>{{ categoryLabels[category] }}</strong
-              ><button @click="startManual({ kind: 'category', id: category })">
-                修复所有已启用项</button
-              ><button
-                v-for="rule in rulesForCategory(category)"
-                :key="rule.id"
-                @click="startManual({ kind: 'rule', id: rule.id })"
-              >
-                {{ rule.label }}
-              </button>
-            </section>
-          </div>
-        </div>
+        <div class="menu-anchor"><button @click="menu = menu === 'formula' ? null : 'formula'">公式修复</button><div v-if="menu === 'formula'" class="dropdown repair-menu single-menu"><section><button v-for="rule in rulesForCategory('formula')" :key="rule.id" :title="ruleDescriptions[rule.id]" @click="startManual({ kind: 'rule', id: rule.id })">{{ rule.label }}</button></section></div></div>
+        <div class="menu-anchor"><button @click="menu = menu === 'other' ? null : 'other'">其他修复</button><div v-if="menu === 'other'" class="dropdown repair-menu other-menu"><section v-for="category in categories.filter(category => category !== 'formula')" :key="category"><strong>{{ categoryLabels[category] }}</strong><button v-for="rule in rulesForCategory(category)" :key="rule.id" :title="ruleDescriptions[rule.id]" @click="rule.id === 'section-auto-number' ? requestFullNumbering() : startManual({ kind: 'rule', id: rule.id })">{{ rule.label }}</button></section></div></div>
         <button
           @click="
             settingsOpen = true;
-            settingsTab = 'rules';
           "
         >
           设置</button
@@ -498,29 +504,29 @@ onBeforeUnmount(() => {
             </button>
           </nav>
           <div v-if="sideTab === 'sections'" class="side-list">
-            <button
-              v-for="section in store.sections"
+            <div
+              v-for="section in sectionRows"
               :key="section.id"
-              draggable="true"
-              :style="{ paddingLeft: `${(section.level - 1) * 16 + 8}px` }"
-              @dragstart="dragging = section.id"
-              @dragover.prevent
-              @drop.prevent="dropSection(section.id)"
-              @click="jump(section.headingFrom, section.headingTo)"
+              class="section-row"
+              :class="{ active: store.selectedSectionId === section.id }"
+              :style="{ paddingLeft: `${(section.level - 1) * 16 + 4}px` }"
             >
-              {{ "#".repeat(section.level) }}
-              {{ section.numberParts?.join(".") }} {{ section.title }}
-            </button>
+              <button v-if="section.children.length" class="tree-toggle" @click.stop="toggleSection(section.id)">{{ collapsedSections.has(section.id) ? "›" : "⌄" }}</button><span v-else class="tree-spacer" />
+              <button class="section-button" draggable="true" @dragstart="dragging = section.id" @dragover.prevent @drop.prevent="dropSection(section.id)" @click="selectSection(section.id)" @contextmenu.prevent="openSectionContext(section.id, $event)">
+                {{ section.numberParts?.join(".") }}{{ section.numberParts ? " " : "" }}{{ section.title }}
+              </button>
+            </div>
           </div>
-          <div v-else class="side-list">
-            <button
-              v-for="item in issues"
-              :key="item.id"
-              @click="jump(item.from, item.to)"
-            >
-              <small>{{ categoryLabels[item.category] }}</small
-              >{{ item.label }}
-            </button>
+          <div v-else class="side-list issue-tree">
+            <section v-for="group in issueGroups" :key="group.category" class="issue-category">
+              <button class="issue-tree-toggle" :title="`${categoryLabels[group.category]}：${group.rules.length} 条规则`" @click="toggleIssueCategory(group.category)">{{ expandedIssueCategories[group.category] === false ? '›' : '⌄' }} <strong>{{ categoryLabels[group.category] }}</strong><small>{{ group.rules.length }}</small></button>
+              <div v-if="expandedIssueCategories[group.category] !== false">
+                <div v-for="ruleGroup in group.rules" :key="ruleGroup.rule.id" class="issue-rule">
+                  <button class="issue-tree-toggle" :title="ruleDescriptions[ruleGroup.rule.id]" @click="toggleIssueRule(ruleGroup.rule.id)">{{ expandedIssueRules[ruleGroup.rule.id] === false ? '›' : '⌄' }} {{ ruleGroup.rule.label }}<small>{{ ruleGroup.items.length }}</small></button>
+                  <button v-for="item in expandedIssueRules[ruleGroup.rule.id] === false ? [] : ruleGroup.items" :key="item.id" class="issue-content" :title="ruleDescriptions[item.ruleId]" @click="jump(item.from, item.to)">{{ item.originalText.replace(/\s+/g, ' ').trim() }}</button>
+                </div>
+              </div>
+            </section>
             <p v-if="!issues.length">当前方案未发现可修复项</p>
           </div></template
         ><button
@@ -630,18 +636,18 @@ onBeforeUnmount(() => {
       ><button @click="sectionAction('minus')">编号 −1</button
       ><button
         @click="
-          run('自动编号', autoNumberSections(store.text));
+          run('为选中章节添加编号', autoNumberSections(store.text, store.repairSettings.sectionNumberStartLevel, context?.id));
           context = undefined;
         "
       >
-        自动编号</button
+        添加编号</button
       ><button
         @click="
-          run('连续编号', renumberSections(store.text));
+          run('为选中章节重排编号', renumberSections(store.text, context?.id));
           context = undefined;
         "
       >
-        连续编号</button
+        重排编号</button
       ><button @click="sectionAction('delete')">删除章节</button>
     </div>
     <div v-if="pendingManual" class="modal">
@@ -657,26 +663,24 @@ onBeforeUnmount(() => {
         </div>
       </section>
     </div>
+    <div v-if="pendingFullNumbering" class="modal">
+      <section>
+        <h3>为所有章节添加编号</h3>
+        <p>添加编号时是否排除一级标题？</p>
+        <div class="numbering-choice">
+          <label><input type="radio" :checked="store.repairSettings.sectionNumberStartLevel === 1" @change="setSectionNumberStartLevel(1)"> 不排除，一级标题也编号</label>
+          <label><input type="radio" :checked="store.repairSettings.sectionNumberStartLevel === 2" @change="setSectionNumberStartLevel(2)"> 排除，一级标题不编号</label>
+        </div>
+        <div class="modal-actions"><button @click="pendingFullNumbering = false">取消</button><button class="accent" @click="confirmFullNumbering">生成修复预览</button></div>
+      </section>
+    </div>
     <div
       v-if="settingsOpen"
       class="modal settings-modal"
       @click.self="settingsOpen = false"
     >
       <section class="settings-shell">
-        <aside>
-          <h3>设置</h3>
-          <button
-            :class="{ active: settingsTab === 'rules' }"
-            @click="settingsTab = 'rules'"
-          >
-            规则</button
-          ><button
-            :class="{ active: settingsTab === 'profiles' }"
-            @click="settingsTab = 'profiles'"
-          >
-            方案
-          </button>
-        </aside>
+        <aside><h3>设置</h3><button class="active">一键修复规则</button></aside>
         <div class="settings-content">
           <button
             class="close"
@@ -684,11 +688,10 @@ onBeforeUnmount(() => {
             @click="settingsOpen = false"
           >
             ×</button
-          ><template v-if="settingsTab === 'rules'"
-            ><header>
+          ><header>
               <p class="eyebrow">规则</p>
-              <h2>修复规则</h2>
-              <span>按类别管理参与检测与修复的规则。</span>
+              <h2>一键修复规则</h2>
+              <span>按类别选择安全修复规则，并保存为方案。</span>
             </header>
             <section
               v-for="category in categories"
@@ -716,6 +719,8 @@ onBeforeUnmount(() => {
                   v-for="rule in rulesForCategory(category)"
                   :key="rule.id"
                   class="rule-setting"
+                  :class="{ exclusive: isExclusiveRule(rule.id) }"
+                  :title="ruleDescriptions[rule.id]"
                   ><input
                     type="checkbox"
                     :checked="
@@ -729,34 +734,13 @@ onBeforeUnmount(() => {
                     "
                   /><span
                     ><strong>{{ rule.label }}</strong
-                    ><small>示例：{{ examples[rule.id] }}</small></span
+                    ><small>{{ ruleDescriptions[rule.id] }}{{ isExclusiveRule(rule.id) ? "（同组只能选一个）" : "" }} 示例：{{ examples[rule.id] }}</small></span
                   ></label
                 >
+                <div v-if="category === 'section' && store.repairSettings.enabledRuleIds.includes('section-auto-number')" class="sub-setting"><span>为所有章节添加编号时</span><label><input type="radio" :checked="store.repairSettings.sectionNumberStartLevel === 1" @change="setSectionNumberStartLevel(1)"> 包含一级标题</label><label><input type="radio" :checked="store.repairSettings.sectionNumberStartLevel === 2" @change="setSectionNumberStartLevel(2)"> 排除一级标题</label></div>
               </div>
             </section>
-            <label class="confidence"
-              >最低置信度
-              <input
-                type="number"
-                min="0"
-                max="1"
-                step="0.1"
-                :value="store.repairSettings.minimumConfidence"
-                @change="
-                  store.updateRepairSettings({
-                    ...store.repairSettings,
-                    minimumConfidence: Number(
-                      ($event.target as HTMLInputElement).value,
-                    ),
-                  });
-                  refreshAutomatic();
-                " /></label></template
-          ><template v-else
-            ><header>
-              <p class="eyebrow">方案</p>
-              <h2>规则方案</h2>
-              <span>保存不同用途的规则组合和置信度。</span>
-            </header>
+            <section class="profile-section"><h3>规则方案</h3><span>保存当前选项组合，便于在不同文档间切换。</span>
             <div class="profile-row">
               <select
                 :value="activeProfileId"
@@ -777,8 +761,7 @@ onBeforeUnmount(() => {
               >
                 保存为方案</button
               ><button @click="deleteProfile">删除</button>
-            </div></template
-          >
+            </div></section>
         </div>
       </section>
     </div>
@@ -955,6 +938,21 @@ button {
   color: var(--accent);
   font-size: 12px;
 }
+.repair-menu.single-menu {
+  grid-template-columns: minmax(250px, 1fr);
+  width: min(390px, calc(100vw - 36px));
+}
+.repair-menu.other-menu {
+  grid-template-columns: minmax(260px, 1fr);
+  width: min(420px, calc(100vw - 36px));
+}
+.repair-menu.other-menu section {
+  border-right: 0;
+  border-bottom: 1px solid var(--border);
+}
+.repair-menu.other-menu section:last-child {
+  border-bottom: 0;
+}
 .history-menu {
   left: auto;
   right: 0;
@@ -1029,6 +1027,29 @@ button {
   text-align: left;
   padding: 8px;
 }
+.section-row {
+  display: flex;
+  align-items: stretch;
+  min-height: 34px;
+}
+.tree-toggle,
+.tree-spacer {
+  flex: 0 0 25px;
+  width: 25px;
+  display: grid;
+  place-items: center;
+  padding: 0 !important;
+  color: var(--muted);
+}
+.section-button {
+  flex: 1;
+  min-width: 0;
+}
+.section-row.active .section-button {
+  background: var(--hover);
+  color: var(--accent);
+  box-shadow: inset 2px 0 var(--accent);
+}
 .side-list small {
   display: block;
   color: var(--muted);
@@ -1036,6 +1057,51 @@ button {
 .side-list p {
   color: var(--muted);
   text-align: center;
+}
+.issue-tree {
+  padding: 7px 6px;
+}
+.issue-category {
+  margin: 2px 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.issue-rule + .issue-rule {
+  border-top: 1px solid var(--border);
+}
+.issue-tree-toggle {
+  display: flex !important;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  color: var(--muted);
+}
+.issue-tree-toggle strong {
+  color: var(--text);
+}
+.issue-tree-toggle small {
+  margin-left: auto;
+  color: var(--accent);
+}
+.issue-rule > .issue-tree-toggle {
+  padding-left: 18px !important;
+  font-size: 12px;
+}
+.issue-content {
+  display: block !important;
+  width: calc(100% - 25px) !important;
+  margin-left: 25px;
+  overflow: hidden;
+  padding-top: 5px !important;
+  padding-bottom: 5px !important;
+  color: var(--muted) !important;
+  font: 11px/1.4 "Cascadia Code", "Sarasa Mono SC", monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.issue-content:hover {
+  color: var(--text) !important;
 }
 .center {
   min-width: 0;
@@ -1158,6 +1224,16 @@ button {
   gap: 8px;
   justify-content: flex-end;
 }
+.numbering-choice {
+  display: grid;
+  gap: 9px;
+  margin: 16px 0;
+}
+.numbering-choice label {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
 .settings-shell {
   width: min(900px, 94vw);
   height: min(680px, 86vh);
@@ -1253,6 +1329,31 @@ button {
 .rule-setting strong,
 .rule-setting small {
   display: block;
+}
+.rule-setting.exclusive {
+  border-left: 3px solid var(--accent);
+  padding-left: 9px;
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+}
+.sub-setting,
+.profile-section {
+  display: grid;
+  gap: 8px;
+  margin: 8px 4px 2px 32px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.sub-setting label {
+  color: var(--text);
+}
+.profile-section {
+  margin: 22px 0 0;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+}
+.profile-section h3 {
+  margin: 0;
+  color: var(--text);
 }
 .rule-setting small {
   color: var(--muted);

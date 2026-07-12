@@ -18,7 +18,7 @@ export interface RuleConfig {
   latexCommands: string[];
 }
 export type RepairScope = "document" | "selection";
-export type RepairCategory = "formula" | "heading" | "whitespace" | "list" | "code" | "blockquote" | "typography";
+export type RepairCategory = "formula" | "spacing" | "section";
 export interface TextSelection { from: number; to: number; }
 export interface RepairRuleDefinition { id: string; category: RepairCategory; label: string; autoEnabledByDefault: boolean; }
 export interface RepairCandidate {
@@ -30,7 +30,7 @@ export interface RepairPlan {
   id: string; source: string; revision: number; scope: RepairScope; target: RepairTarget;
   candidates: RepairCandidate[]; skipped: string[]; conflicts: string[]; createdAt: number;
 }
-export interface RepairSettings { enabledRuleIds: string[]; minimumConfidence: number; }
+export interface RepairSettings { enabledRuleIds: string[]; sectionNumberStartLevel: 1 | 2; }
 export const defaultRuleConfig: RuleConfig = {
   blankLines: 1, listMarker: "-", orderedListStyle: "incremental", separatorMinLength: 5,
   allowMultipleH1: false, ignoredRuleIds: [],
