@@ -4,6 +4,7 @@ import { diffLines } from "diff";
 import { message } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import localRelease from "../version.json";
 import { useDocumentStore } from "./stores/document";
 import {
   categoryLabels,
@@ -34,6 +35,14 @@ import {
   isDesktopApp,
   isSupportedTextPath,
 } from "./services/nativeFiles";
+import {
+  detectBrowserPlatform,
+  downloadUrlForPlatform,
+  fetchLatestRelease,
+  isNewerVersion,
+  type Platform,
+  type ReleaseManifest,
+} from "./services/updater";
 import type { RepairCategory, RepairPlan, RepairTarget } from "./types";
 
 const LoadingPane = defineComponent({
@@ -72,8 +81,15 @@ const preview = ref<{
   setScrollPosition: (ratio: number, sourceLine?: number) => void;
 }>();
 const diffRoot = ref<HTMLElement>();
-const menu = ref<"file" | "formula" | "other" | "history" | null>(null);
+const menu = ref<"file" | "formula" | "other" | "history" | "help" | null>(null);
 const settingsOpen = ref(false);
+const aboutOpen = ref(false);
+const updateDialog = ref<{
+  state: "checking" | "upToDate" | "available" | "error";
+  platform: Platform;
+  release?: ReleaseManifest;
+  detail?: string;
+}>();
 const context = ref<{ id: string; x: number; y: number }>();
 const issueContext = ref<{ x: number; y: number }>();
 type ContextPosition = { x: number; y: number; opensLeft: boolean; opensUp: boolean };
@@ -221,6 +237,54 @@ function persistProfiles() {
 function toggleTheme() {
   theme.value = theme.value === "dark" ? "light" : "dark";
   localStorage.setItem("mdtool.theme", theme.value);
+}
+async function platformForUpdate(): Promise<Platform> {
+  if (!isDesktopApp()) return detectBrowserPlatform();
+  try {
+    return await invoke<Platform>("current_platform");
+  } catch {
+    return detectBrowserPlatform();
+  }
+}
+async function openExternalUrl(url: string) {
+  if (isDesktopApp()) await invoke("open_external_url", { url });
+  else window.open(url, "_blank", "noopener,noreferrer");
+}
+function openProject() {
+  openExternalUrl("https://github.com/BlueBlueKitty/mdTool").catch(() => {
+    status.value = "无法打开项目链接";
+  });
+}
+function showAbout() {
+  menu.value = null;
+  aboutOpen.value = true;
+}
+async function checkForUpdates() {
+  menu.value = null;
+  updateDialog.value = { state: "checking", platform: await platformForUpdate() };
+  try {
+    const release = await fetchLatestRelease();
+    updateDialog.value = isNewerVersion(release.version, localRelease.version)
+      ? { state: "available", platform: updateDialog.value.platform, release }
+      : { state: "upToDate", platform: updateDialog.value.platform, release };
+  } catch (error) {
+    updateDialog.value = {
+      state: "error",
+      platform: updateDialog.value.platform,
+      detail: error instanceof Error ? error.message : "检查更新失败",
+    };
+  }
+}
+async function downloadUpdate() {
+  const dialog = updateDialog.value;
+  if (!dialog?.release) return;
+  try {
+    await openExternalUrl(downloadUrlForPlatform(dialog.release, dialog.platform));
+    status.value = "已在浏览器中打开下载链接";
+    updateDialog.value = undefined;
+  } catch (error) {
+    status.value = error instanceof Error ? `无法打开下载链接：${error.message}` : "无法打开下载链接";
+  }
 }
 function startResize(side: "left" | "right", event: PointerEvent) {
   const initial = side === "left" ? leftWidth.value : rightWidth.value;
@@ -724,6 +788,15 @@ onBeforeUnmount(() => { unlistenClose?.(); unlistenDrop?.(); });
           </div>
         </div>
         <div class="menu-anchor">
+          <button title="关于 mdTool 与检查更新" @click="menu = menu === 'help' ? null : 'help'">
+            帮助
+          </button>
+          <div v-if="menu === 'help'" class="dropdown help-menu">
+            <button title="从 GitHub 获取最新版本与更新说明" @click="checkForUpdates">检查更新</button>
+            <button title="查看 mdTool 项目信息" @click="showAbout">关于</button>
+          </div>
+        </div>
+        <div class="menu-anchor">
           <button
             title="选择并预览公式修复规则"
             @click="menu = menu === 'formula' ? null : 'formula'"
@@ -1181,6 +1254,50 @@ onBeforeUnmount(() => { unlistenClose?.(); unlistenDrop?.(); });
         </div>
       </section>
     </div>
+    <div v-if="aboutOpen" class="modal" @click.self="aboutOpen = false">
+      <section class="about-dialog">
+        <button class="close" aria-label="关闭关于" @click="aboutOpen = false">×</button>
+        <p class="dialog-eyebrow">Markdown structure assistant</p>
+        <h2>mdTool</h2>
+        <p>版本 {{ localRelease.version }}</p>
+        <a href="https://github.com/BlueBlueKitty/mdTool" @click.prevent="openProject">
+          github.com/BlueBlueKitty/mdTool
+        </a>
+        <p class="copyright">Copyright © Yibo Yuan</p>
+      </section>
+    </div>
+    <div v-if="updateDialog" class="modal" @click.self="updateDialog = undefined">
+      <section class="update-dialog" aria-live="polite">
+        <button class="close" aria-label="关闭更新对话框" @click="updateDialog = undefined">×</button>
+        <template v-if="updateDialog.state === 'checking'">
+          <p class="dialog-eyebrow">GitHub Raw</p>
+          <h2>正在检查更新…</h2>
+          <p>正在获取最新版本与更新说明。</p>
+        </template>
+        <template v-else-if="updateDialog.state === 'upToDate'">
+          <p class="dialog-eyebrow">已经是最新版本</p>
+          <h2>mdTool {{ localRelease.version }}</h2>
+          <p>当前安装版本已是最新版本。</p>
+          <div class="modal-actions"><button class="accent" @click="updateDialog = undefined">知道了</button></div>
+        </template>
+        <template v-else-if="updateDialog.state === 'available' && updateDialog.release">
+          <p class="dialog-eyebrow">发现新版本</p>
+          <h2>mdTool {{ updateDialog.release.version }}</h2>
+          <p>当前版本 {{ localRelease.version }}，下载将交由系统浏览器完成。</p>
+          <ul class="release-notes"><li v-for="note in updateDialog.release.notes" :key="note">{{ note }}</li></ul>
+          <div class="modal-actions">
+            <button @click="updateDialog = undefined">暂不更新</button>
+            <button class="accent" @click="downloadUpdate">下载更新</button>
+          </div>
+        </template>
+        <template v-else>
+          <p class="dialog-eyebrow">无法检查更新</p>
+          <h2>连接 GitHub 失败</h2>
+          <p>{{ updateDialog.detail }}</p>
+          <div class="modal-actions"><button class="accent" @click="updateDialog = undefined">关闭</button></div>
+        </template>
+      </section>
+    </div>
     <div
       v-if="settingsOpen"
       class="modal settings-modal"
@@ -1549,6 +1666,7 @@ button {
   border-right: 0;
   border-bottom: 1px solid var(--border);
 }
+.help-menu { min-width: 176px; }
 .repair-menu.other-menu section:last-child {
   border-bottom: 0;
 }
@@ -1917,12 +2035,25 @@ button {
   background: #0008;
 }
 .modal > section:not(.settings-shell) {
+  position: relative;
   width: min(620px, 90vw);
   background: var(--panel);
   border: 1px solid var(--border-strong);
   border-radius: 10px;
   padding: 22px;
 }
+.modal > .about-dialog,
+.modal > .update-dialog { width: min(460px, 90vw); }
+.about-dialog h2,
+.update-dialog h2 { margin: 2px 0 5px; letter-spacing: -0.02em; }
+.about-dialog a { color: var(--link); text-decoration: none; word-break: break-all; }
+.about-dialog a:hover { text-decoration: underline; }
+.dialog-eyebrow { margin: 0 0 7px; color: var(--accent); font-size: 11px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+.copyright { margin: 23px 0 0; color: var(--muted); font-size: 12px; }
+.release-notes { margin: 16px 0 20px; padding-left: 20px; color: var(--text); }
+.release-notes li + li { margin-top: 7px; }
+.about-dialog .close,
+.update-dialog .close { position: absolute; top: 9px; right: 9px; font-size: 18px; }
 .modal-actions {
   display: flex;
   gap: 8px;

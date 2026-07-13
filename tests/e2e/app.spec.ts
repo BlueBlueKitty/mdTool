@@ -1,5 +1,14 @@
 import { expect, test } from "@playwright/test";
 
+test("帮助菜单显示关于信息和项目链接", async ({ page }) => {
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await page.getByRole("button", { name: "帮助" }).click();
+  await page.getByRole("button", { name: "关于" }).click();
+  await expect(page.getByRole("heading", { name: "mdTool" })).toBeVisible();
+  await expect(page.getByText("Copyright © Yibo Yuan")).toBeVisible();
+  await expect(page.getByRole("link", { name: "github.com/BlueBlueKitty/mdTool" })).toBeVisible();
+});
+
 test("公式修复菜单会打开对应的修复预览工作区", async ({ page }) => {
   await page.goto("/", { waitUntil: "domcontentloaded" }); await page.locator(".editor:not(.readonly) .cm-content").click(); await page.keyboard.insertText("# 标题\n\n##副标题");
   await page.getByRole("button", { name: "公式修复" }).click(); await page.getByRole("button", { name: "清理公式首尾空白" }).click();

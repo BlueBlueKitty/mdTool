@@ -39,6 +39,17 @@ npm run tauri:dev
 | `npm run test:watch`  | 以监听模式运行单元测试。                         |
 | `npm run test:e2e`    | 启动本地 Vite 服务并运行 Playwright 端到端测试。 |
 
+## 发布与检查更新
+
+应用从 `https://raw.githubusercontent.com/BlueBlueKitty/mdTool/main/version.json` 获取最新版本。发布新版本时，请先更新根目录的 `version.json`，其中必须包含：
+
+- `version`：最新语义化版本号；
+- `notes`：更新说明数组；
+- `releaseUrl`：对应 GitHub Release 页面；
+- `downloads.windows`、`downloads.macos`、`downloads.linux`：各平台安装包的直链。
+
+`version.json` 的版本号也应与 `package.json`、`src-tauri/tauri.conf.json` 和 `src-tauri/Cargo.toml` 保持一致。将安装包上传到 GitHub Release 并推送该清单后，已安装的 mdTool 可通过“帮助 → 检查更新”读取说明，并在确认后于系统浏览器下载本机平台的安装包。
+
 ## 技术栈
 
 - Tauri 2

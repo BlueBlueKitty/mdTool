@@ -109,3 +109,8 @@
 ## 2026-07-13 启动参数文件读取授权
 
 - 启动参数路径已通过 `startup_paths()` 到达 Vue，但 `readTextFile()` 仅对由文件对话框或运行中拖放授予范围的路径可读，故启动打开出现“无法打开”。须限制 Rust 端读取为当前启动参数列表中的路径，再将文本返回前端载入。
+
+## 2026-07-13 帮助与更新检查
+
+- 应用版本当前在 `package.json`、`src-tauri/tauri.conf.json` 与 `src-tauri/Cargo.toml` 中均为 `0.1.0`。将新增根目录 `version.json` 作为发布到 GitHub Raw 的更新清单，保留版本号、说明、Release 页面与按平台分发包 URL。
+- Tauri 已配置自定义 invoke 命令与 capability；外部链接将以受限的 Rust `open_external_url` 命令交由系统默认浏览器处理，避免把安装包下载到应用 WebView 中。

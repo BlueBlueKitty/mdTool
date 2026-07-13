@@ -26,6 +26,14 @@
 - 构建发现 `read_startup_file` 条件误用了 JavaScript 风格的 `if (...)` 写法，少闭合括号；已改为 Rust 的 `if !condition` 语法，准备复编译。
 - 第 19 阶段完成：修正后核心测试 24/24、前端生产构建、Tauri 发布构建均通过；新 exe 位于 `src-tauri/target-startup-argv-fix/release/mdtool.exe`。
 
+## 2026-07-13
+
+- 启动第 20 阶段：已确认远程仓库默认分支为 `main`，应用为 Vue + Tauri 2，现有版本为 `0.1.0`；下一步实现根目录远程版本清单与帮助/更新交互。
+- 已添加根目录 `version.json`、更新清单解析与版本比较服务、帮助菜单和关于/更新对话框；原生端仅允许将 mdTool GitHub HTTPS 链接交给系统默认浏览器打开。
+- 验证：`npm test` 26/26 通过，`npm run build` 通过，`npm run tauri:build` 通过并生成 `src-tauri/target/release/mdtool.exe`；Windows linker stdout 为正常链接提示。
+- 端到端验证：`npm run test:e2e` 10/10 通过，新增关于菜单交互覆盖。第 20 阶段完成。
+- 外网复核：工具环境无法从 GitHub/Raw 读取缓存页面（`Cache miss`），因此未对尚未推送的 Release 资产作在线断言；本地实现、清单格式和链接选择均已由测试覆盖。
+
 - 启动第 15 阶段：已读取计划、当前文件服务、公式规则、修复规划器与三栏状态；待继续检查 App、编辑器及现有端到端用例后分批实现。
 - 已确认：修复动作标签可由 `currentPlan.target` 推导；差异滚动错位源于按 chunk 标注行号；文件选择器需要允许选择所有文件、再由应用做白名单判定与无扩展名文本尝试。
 - 首次第 15 阶段构建：核心单测 22/22 通过；TypeScript 报出 `restoreCenterPosition` 中不可达 fallback 的 `never` 类型错误，正改为只保留已挂载编辑器的行锚点恢复。
