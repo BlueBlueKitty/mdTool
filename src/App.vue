@@ -161,7 +161,7 @@ const expandedIssueRules = ref<Record<string, boolean>>({});
 let refreshTimer: number | undefined;
 let previewTimer: number | undefined;
 const workspaceStyle = computed(() => ({
-  gridTemplateColumns: `${leftCollapsed.value ? 32 : leftWidth.value}px minmax(360px,1fr) ${rightCollapsed.value ? 32 : rightWidth.value}px`,
+  gridTemplateColumns: `${leftCollapsed.value ? 32 : leftWidth.value}px minmax(280px,1fr) ${rightCollapsed.value ? 32 : rightWidth.value}px`,
 }));
 const expandedCategories = ref<Record<string, boolean>>(
   Object.fromEntries(categories.map((category) => [category, true])),
@@ -788,15 +788,6 @@ onBeforeUnmount(() => { unlistenClose?.(); unlistenDrop?.(); });
           </div>
         </div>
         <div class="menu-anchor">
-          <button title="关于 mdTool 与检查更新" @click="menu = menu === 'help' ? null : 'help'">
-            帮助
-          </button>
-          <div v-if="menu === 'help'" class="dropdown help-menu">
-            <button title="从 GitHub 获取最新版本与更新说明" @click="checkForUpdates">检查更新</button>
-            <button title="查看 mdTool 项目信息" @click="showAbout">关于</button>
-          </div>
-        </div>
-        <div class="menu-anchor">
           <button
             title="选择并预览公式修复规则"
             @click="menu = menu === 'formula' ? null : 'formula'"
@@ -851,7 +842,15 @@ onBeforeUnmount(() => { unlistenClose?.(); unlistenDrop?.(); });
         </div>
         <button title="配置一键修复规则与规则方案" @click="settingsOpen = true">
           设置</button
-        ><button
+        ><div class="menu-anchor">
+          <button title="关于 mdTool 与检查更新" @click="menu = menu === 'help' ? null : 'help'">
+            帮助
+          </button>
+          <div v-if="menu === 'help'" class="dropdown help-menu">
+            <button title="从 GitHub 获取最新版本与更新说明" @click="checkForUpdates">检查更新</button>
+            <button title="查看 mdTool 项目信息" @click="showAbout">关于 mdTool</button>
+          </div>
+        </div><button
           class="accent"
           title="生成当前规则的全文修复预览"
           @click="oneClick"
@@ -1303,7 +1302,7 @@ onBeforeUnmount(() => { unlistenClose?.(); unlistenDrop?.(); });
       class="modal settings-modal"
       @click.self="settingsOpen = false"
     >
-      <section class="settings-shell">
+      <section class="settings-shell" role="dialog" aria-modal="true" aria-labelledby="settings-title">
         <button class="close" aria-label="关闭设置" @click="settingsOpen = false">×</button>
         <aside>
           <h3>设置</h3>
@@ -1311,7 +1310,7 @@ onBeforeUnmount(() => { unlistenClose?.(); unlistenDrop?.(); });
         </aside>
         <div class="settings-content">
           <header>
-            <h2>一键修复规则</h2>
+            <h2 id="settings-title">一键修复规则</h2>
             <span>在修复预览中实时为全文应用以下规则，并可一键修复。</span>
           </header>
           <section class="profile-section profile-section-top">
@@ -1444,6 +1443,8 @@ onBeforeUnmount(() => { unlistenClose?.(); unlistenDrop?.(); });
 body {
   margin: 0;
   min-width: 860px;
+  min-height: 100vh;
+  background: #071012;
 }
 button,
 input,
@@ -1452,6 +1453,16 @@ select {
 }
 button {
   cursor: pointer;
+}
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+button:disabled {
+  cursor: not-allowed;
 }
 .panel-loading {
   display: grid;
@@ -1465,9 +1476,11 @@ button {
   --bg: #071012;
   --bar: #0a1517;
   --panel: #0c1719;
+  --surface-raised: #102023;
   --editor: #10191c;
   --code: #142326;
   --text: #d5dfda;
+  --text-strong: #edf5f1;
   --muted: #78908c;
   --border: #294347;
   --border-strong: #466b65;
@@ -1476,6 +1489,15 @@ button {
   --accent-ink: #17201d;
   --link: #78c7bf;
   --math: #f4e2ba;
+  --warning: #f1b75b;
+  --danger: #ef8e85;
+  --selection: #2c71608a;
+  --focus-ring: #f2ba5b;
+  --syntax-heading: #f1c36f;
+  --syntax-link: #75d1c5;
+  --syntax-quote: #93aaa5;
+  --syntax-code: #b8d8d0;
+  --syntax-meta: #91a6a1;
   --cursor: #f7c96e;
   --jump-highlight: #6d55262e;
   --jump-highlight-strong: #f1b75b82;
@@ -1493,9 +1515,11 @@ button {
   --bg: #f1f4f2;
   --bar: #ffffff;
   --panel: #f8faf9;
+  --surface-raised: #f0f5f2;
   --editor: #ffffff;
   --code: #edf2ef;
   --text: #20302d;
+  --text-strong: #172522;
   --muted: #637571;
   --border: #d5dfda;
   --border-strong: #a9bbb6;
@@ -1504,6 +1528,15 @@ button {
   --accent-ink: #fff;
   --link: #087b73;
   --math: #503b19;
+  --warning: #9b5d0b;
+  --danger: #b73e37;
+  --selection: #a9d7ccab;
+  --focus-ring: #0a8175;
+  --syntax-heading: #8a570e;
+  --syntax-link: #087b73;
+  --syntax-quote: #607b74;
+  --syntax-code: #195f59;
+  --syntax-meta: #6d817b;
   --cursor: #155f59;
   --jump-highlight: #f3c36d54;
   --jump-highlight-strong: #f3c36d99;
@@ -1514,7 +1547,7 @@ button {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 0 12px;
+  padding: 0 10px;
   background: var(--bar);
   border-bottom: 1px solid var(--border);
   font-size: 13px;
@@ -1541,7 +1574,8 @@ button {
   background: transparent;
   color: inherit;
   padding: 7px 9px;
-  border-radius: 5px;
+  border-radius: 4px;
+  transition: background-color 140ms ease, color 140ms ease, border-color 140ms ease;
 }
 .menubar button:hover:not(:disabled),
 .left button:hover,
@@ -1556,6 +1590,10 @@ button {
   background: var(--accent) !important;
   color: var(--accent-ink) !important;
   font-weight: 700;
+}
+.accent:hover:not(:disabled),
+.apply:hover:not(:disabled) {
+  filter: brightness(1.06);
 }
 .icon-button {
   display: grid;
@@ -1628,10 +1666,10 @@ button {
   display: grid;
   min-width: 164px;
   padding: 6px;
-  background: var(--bar);
+  background: var(--surface-raised);
   border: 1px solid var(--border-strong);
   border-radius: 8px;
-  box-shadow: 0 14px 32px #0004;
+  box-shadow: 0 14px 32px #0005;
 }
 .dropdown button {
   text-align: left;
@@ -1666,7 +1704,14 @@ button {
   border-right: 0;
   border-bottom: 1px solid var(--border);
 }
-.help-menu { min-width: 176px; }
+.help-menu { min-width: 190px; gap: 2px; }
+.help-menu .menu-caption {
+  margin: 3px 8px 5px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .08em;
+}
 .repair-menu.other-menu section:last-child {
   border-bottom: 0;
 }
@@ -1712,7 +1757,7 @@ button {
   display: flex;
   align-items: center;
   height: 43px;
-  padding: 0 10px;
+  padding: 0 9px;
   border-bottom: 1px solid var(--border);
 }
 .left nav button,
@@ -1912,8 +1957,9 @@ button {
   margin: 0;
   padding: 9px 14px;
   border-bottom: 1px solid var(--border);
-  color: var(--accent);
+  color: var(--text-strong);
   font-size: 12px;
+  font-weight: 700;
 }
 .resizer {
   position: absolute;
@@ -1972,32 +2018,34 @@ button {
 }
 .diff {
   overflow: auto;
-  padding: 20px;
+  padding: 20px 24px;
   background: var(--editor);
 }
 .diff pre {
   white-space: pre-wrap;
   margin: 0;
-  padding: 4px 8px;
+  padding: 5px 9px;
   font:
     13px/1.55 "Cascadia Code",
     monospace;
 }
 .diff .added {
-  background: #1c5a4333;
+  background: color-mix(in srgb, #3bba7d 16%, transparent);
+  border-left: 2px solid #3bba7d;
 }
 .diff .removed {
-  background: #b14a4a33;
+  background: color-mix(in srgb, var(--danger) 15%, transparent);
+  border-left: 2px solid var(--danger);
   text-decoration: line-through;
 }
 .context {
   position: fixed;
   z-index: 30;
   display: grid;
-  background: var(--bar);
+  background: var(--surface-raised);
   border: 1px solid var(--border-strong);
   border-radius: 7px;
-  box-shadow: 0 10px 28px #0005;
+  box-shadow: 0 10px 28px #0006;
   padding: 5px;
 }
 .context button {
@@ -2016,7 +2064,7 @@ button {
   max-height: min(70vh, 480px);
   overflow: auto;
   padding: 5px;
-  background: var(--bar);
+  background: var(--surface-raised);
   border: 1px solid var(--border-strong);
   border-radius: 7px;
   box-shadow: 0 10px 28px #0005;
@@ -2032,7 +2080,7 @@ button {
   z-index: 50;
   display: grid;
   place-items: center;
-  background: #0008;
+  background: #0009;
 }
 .modal > section:not(.settings-shell) {
   position: relative;
@@ -2068,45 +2116,49 @@ button {
 .numbering-choice input,.sub-setting input { width: 62px; padding: 6px; color: var(--text); background: var(--editor); border: 1px solid var(--border); border-radius: 5px; }
 .settings-shell {
   position: relative;
-  width: min(900px, 94vw);
-  height: min(680px, 86vh);
+  width: min(940px, 94vw);
+  height: min(700px, 88vh);
   display: grid;
-  grid-template-columns: 180px 1fr;
+  grid-template-columns: 196px minmax(0, 1fr);
   overflow: hidden;
   background: var(--panel);
   border: 1px solid var(--border-strong);
-  border-radius: 12px;
-  box-shadow: 0 24px 70px #0007;
+  border-radius: 10px;
+  box-shadow: 0 24px 70px #0008;
 }
 .settings-shell > aside {
-  padding: 18px 10px;
-  background: var(--bar);
+  padding: 22px 12px;
+  background: var(--surface-raised);
   border-right: 1px solid var(--border);
 }
 .settings-shell h3 {
-  margin: 0 8px 22px;
+  margin: 0 8px 20px;
   color: var(--text);
 }
 .settings-shell aside button {
   display: block;
   width: 100%;
   text-align: left;
+  min-height: 34px;
   margin: 3px 0;
 }
 .settings-shell aside button.active {
-  background: var(--hover);
+  background: color-mix(in srgb, var(--accent) 11%, var(--hover));
   color: var(--accent);
+  box-shadow: inset 2px 0 var(--accent);
 }
 .settings-content {
   position: relative;
   overflow: auto;
-  padding: 32px 38px;
+  padding: 30px 38px 40px;
 }
 .settings-content header {
-  margin-bottom: 23px;
+  margin-bottom: 20px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--border);
 }
 .settings-content h2 {
-  margin: 3px 0 7px;
+  margin: 0 0 7px;
   font:
     600 24px Georgia,
     "STSong",
@@ -2128,38 +2180,54 @@ button {
   top: 12px;
   z-index: 3;
   margin: 0;
-  background: var(--bar) !important;
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  padding: 0 !important;
+  background: var(--panel) !important;
   border: 1px solid var(--border) !important;
-  box-shadow: 0 3px 10px #0003;
-  font-size: 22px !important;
+  box-shadow: 0 4px 12px #0003;
+  font-size: 20px !important;
 }
 .rule-category {
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 7px;
   overflow: hidden;
-  margin-bottom: 10px;
+  margin-bottom: 12px;
+  background: var(--surface-raised);
 }
 .category-toggle {
   display: flex;
   align-items: center;
   width: 100%;
   gap: 10px;
-  padding: 11px 13px !important;
+  min-height: 42px;
+  padding: 10px 13px !important;
   text-align: left;
 }
+.category-toggle:hover { background: var(--hover); }
 .category-toggle small {
   margin-left: auto;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
   color: var(--muted);
+  font-size: 11px;
 }
 .rule-list {
-  padding: 4px 12px 10px;
+  padding: 2px 12px 10px;
+  background: var(--panel);
 }
 .rule-setting {
   display: flex;
   gap: 10px;
-  padding: 11px 4px;
+  padding: 12px 7px;
   border-top: 1px solid var(--border);
+  border-radius: 4px;
+  transition: background-color 140ms ease;
 }
+.rule-setting:hover { background: color-mix(in srgb, var(--hover) 72%, transparent); }
 .rule-setting input {
   margin-top: 3px;
   accent-color: var(--accent);
@@ -2198,10 +2266,11 @@ button {
 .range-inputs { display: inline-flex; align-items: center; gap: 7px; width: fit-content; }
 .sub-setting > small { color: var(--muted); line-height: 1.55; }
 .profile-section-top {
-  margin: 0 0 18px;
-  padding: 0 0 18px;
-  border-top: 0;
-  border-bottom: 1px solid var(--border);
+  margin: 0 0 16px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface-raised);
 }
 .sub-setting label {
   color: var(--text);
@@ -2243,6 +2312,12 @@ button {
   flex-wrap: wrap;
   gap: 8px;
 }
+.profile-row button:not(.accent) { border: 1px solid var(--border-strong) !important; }
+.profile-row button:disabled { opacity: .42; }
+@media (max-width: 760px) {
+  .settings-shell { width: min(680px, 96vw); grid-template-columns: 148px minmax(0, 1fr); }
+  .settings-content { padding: 24px; }
+}
 .profile-row select,
 .profile-row input {
   flex: 1 1 180px;
@@ -2270,7 +2345,19 @@ button {
   padding: 9px 10px;
 }
 .form-error {
-  color: #e97b72;
+  color: var(--danger);
+}
+@media (max-width: 1120px) {
+  .menubar { padding: 0 7px; }
+  .menus,.menu-status { gap: 1px; }
+  .status-text { display: none; }
+  .file-name { max-width: 104px; margin: 0 3px; }
+  .menubar button { padding-inline: 7px; }
+}
+@media (max-width: 940px) {
+  .file-name { display: none; }
+  .menubar .menu-anchor:nth-of-type(3) > button,
+  .menubar .menu-anchor:nth-of-type(4) > button { padding-inline: 5px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .section-row,

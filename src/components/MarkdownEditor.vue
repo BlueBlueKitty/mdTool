@@ -28,4 +28,24 @@ onMounted(() => { view = new EditorView({ state: EditorState.create({ doc: props
 watch(() => props.modelValue, value => { if (!view || value === view.state.doc.toString()) return; const previous = view.state.doc.toString(); const anchor = captureViewportAnchor(); debugScroll("external-update-before", { scrollTop: view.scrollDOM.scrollTop, scrollHeight: view.scrollDOM.scrollHeight, anchorPosition: anchor?.position, anchorOffset: anchor?.offset }); applying = true; view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: value } }); applying = false; debugScroll("external-update-dispatched", { scrollTop: view.scrollDOM.scrollTop, scrollHeight: view.scrollDOM.scrollHeight }); if (anchor) requestAnimationFrame(() => { restoreViewportAnchor(anchor, previous, value); requestAnimationFrame(() => debugScroll("two-frames-later", { scrollTop: view?.scrollDOM.scrollTop, scrollHeight: view?.scrollDOM.scrollHeight })); }); }); onBeforeUnmount(() => { window.clearTimeout(highlightTimer); view?.destroy(); });
 </script>
 <template><div ref="root" class="editor" :class="{ readonly }" lang="en" spellcheck="false" aria-label="Markdown 源码编辑器" /></template>
-<style scoped>.editor { height: 100%; min-height: 0; }.editor :deep(.cm-editor) { height: 100%; font: 15px/1.75 "Cascadia Code", "Sarasa Mono SC", monospace; background: var(--editor); color: var(--text); caret-color: var(--cursor) !important; }.readonly :deep(.cm-editor) { background: var(--panel); }.editor :deep(.cm-scroller) { padding: 1.5rem; }.editor :deep(.cm-gutters) { background: var(--editor); color: var(--muted); border: 0; }.readonly :deep(.cm-gutters) { background: var(--panel); }.editor :deep(.cm-cursor),.editor :deep(.cm-focused .cm-cursor),.editor :deep(.cm-dropCursor) { border-left: 2px solid var(--cursor)!important; }.editor :deep(.cm-content) { caret-color: var(--cursor) !important; }.editor :deep(.cm-jump-highlight) { background: var(--jump-highlight); outline: 1px solid var(--jump-outline); border-radius: 2px; animation: jump-flash 1.5s ease-out; }@keyframes jump-flash { 0%,45% { background: var(--jump-highlight-strong); } 100% { background: var(--jump-highlight); } }</style>
+<style scoped>
+.editor { height: 100%; min-height: 0; }
+.editor :deep(.cm-editor) { height: 100%; font: 15px/1.78 "Cascadia Code", "Sarasa Mono SC", monospace; background: var(--editor); color: var(--text); caret-color: var(--cursor) !important; }
+.readonly :deep(.cm-editor) { background: var(--panel); }
+.editor :deep(.cm-scroller) { padding: 20px 24px 28px; }
+.editor :deep(.cm-gutters) { min-width: 42px; padding-right: 8px; background: var(--editor); color: var(--muted); border: 0; font-variant-numeric: tabular-nums; }
+.readonly :deep(.cm-gutters) { background: var(--panel); }
+.editor :deep(.cm-activeLineGutter) { background: color-mix(in srgb, var(--accent) 8%, transparent); color: var(--accent); }
+.editor :deep(.cm-activeLine) { background: color-mix(in srgb, var(--accent) 4%, transparent); }
+.editor :deep(.cm-selectionBackground),.editor :deep(.cm-focused .cm-selectionBackground) { background: var(--selection) !important; }
+.editor :deep(.cm-cursor),.editor :deep(.cm-focused .cm-cursor),.editor :deep(.cm-dropCursor) { border-left: 2px solid var(--cursor)!important; }
+.editor :deep(.cm-content) { caret-color: var(--cursor) !important; }
+.editor :deep(.cm-heading) { color: var(--syntax-heading); font-weight: 700; }
+.editor :deep(.cm-link),.editor :deep(.cm-url) { color: var(--syntax-link); text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--syntax-link) 40%, transparent); text-underline-offset: 2px; }
+.editor :deep(.cm-quote) { color: var(--syntax-quote); font-style: italic; }
+.editor :deep(.cm-monospace),.editor :deep(.cm-string) { color: var(--syntax-code); }
+.editor :deep(.cm-meta),.editor :deep(.cm-contentMatch) { color: var(--syntax-meta); }
+.editor :deep(.cm-invalidchar),.editor :deep(.cm-invalid) { color: var(--danger); text-decoration: wavy underline color-mix(in srgb, var(--danger) 75%, transparent); text-underline-offset: 3px; }
+.editor :deep(.cm-jump-highlight) { background: var(--jump-highlight); outline: 1px solid var(--jump-outline); border-radius: 3px; animation: jump-flash 1.5s ease-out; }
+@keyframes jump-flash { 0%,45% { background: var(--jump-highlight-strong); } 100% { background: var(--jump-highlight); } }
+</style>

@@ -62,7 +62,21 @@ onBeforeUnmount(() => { disposed = true; typesetVersion += 1; });
 </script>
 <template><article ref="root" class="preview" @scroll="onScroll" @contextmenu.prevent="emit('context-menu', $event.clientX, $event.clientY)" v-html="html" /></template>
 <style scoped>
-.preview { height: 100%; overflow: auto; padding: 24px; line-height: 1.75; color: var(--text); background: var(--panel); }
-.preview :deep(h1),.preview :deep(h2),.preview :deep(h3) { color: var(--accent); font-family: Georgia, "STSong", serif; }
-.preview :deep(code),.preview :deep(pre) { background: var(--code); color: var(--text); }.preview :deep(pre) { padding: 12px; overflow: auto; }.preview :deep(a) { color: var(--link); }.preview :deep(blockquote) { margin-left: 0; border-left: 3px solid var(--accent); padding-left: 12px; color: var(--muted); }.preview :deep(mjx-container) { color: var(--math); }.preview :deep(.math-block) { overflow-x: auto; padding: 10px 0; text-align: center; }
+.preview { height: 100%; overflow: auto; padding: 22px 26px 32px; line-height: 1.78; color: var(--text); background: var(--panel); text-wrap: pretty; }
+.preview :deep(h1),.preview :deep(h2),.preview :deep(h3),.preview :deep(h4) { color: var(--text-strong); font-family: Georgia, "STSong", "Songti SC", serif; line-height: 1.35; letter-spacing: .01em; }
+.preview :deep(h1) { margin: 0 0 1rem; padding-bottom: .55rem; border-bottom: 1px solid var(--border); font-size: 1.65rem; }
+.preview :deep(h2) { margin-top: 1.85rem; font-size: 1.32rem; }
+.preview :deep(h3) { margin-top: 1.45rem; font-size: 1.12rem; }
+.preview :deep(h4) { margin-top: 1.2rem; font-size: 1rem; }
+.preview :deep(p),.preview :deep(li) { max-width: 76ch; }
+.preview :deep(code) { padding: .12em .36em; border: 1px solid var(--border); border-radius: 4px; background: var(--code); color: var(--syntax-code); font: .9em "Cascadia Code", "Sarasa Mono SC", monospace; }
+.preview :deep(pre) { margin: 1rem 0; padding: 13px 15px; overflow: auto; border: 1px solid var(--border); border-radius: 6px; background: var(--code); box-shadow: inset 0 1px color-mix(in srgb, white 6%, transparent); }
+.preview :deep(pre code) { padding: 0; border: 0; background: transparent; color: var(--text); }
+.preview :deep(a) { color: var(--link); text-decoration-thickness: 1px; text-underline-offset: 3px; }
+.preview :deep(blockquote) { margin: 1rem 0; padding: .15rem 0 .15rem 14px; border-left: 3px solid var(--accent); color: var(--muted); }
+.preview :deep(hr) { border: 0; border-top: 1px solid var(--border); margin: 1.5rem 0; }
+.preview :deep(table) { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; font-size: .93em; }
+.preview :deep(th),.preview :deep(td) { padding: .48rem .65rem; border: 1px solid var(--border); text-align: left; }
+.preview :deep(th) { background: var(--surface-raised); color: var(--text-strong); }
+.preview :deep(mjx-container) { color: var(--math); }.preview :deep(.math-block) { overflow-x: auto; margin: 1rem 0; padding: 12px 0; text-align: center; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
 </style>
