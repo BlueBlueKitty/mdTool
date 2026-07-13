@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import MarkdownIt from "markdown-it";
-const props = defineProps<{ modelValue: string }>(); const emit = defineEmits<{ scroll: [ratio: number] }>(); const root = ref<HTMLElement>(); const ready = ref(false);
+const props = defineProps<{ modelValue: string }>(); const emit = defineEmits<{ scroll: [ratio: number]; "context-menu": [x: number, y: number] }>(); const root = ref<HTMLElement>();
 const md = new MarkdownIt({ html: false, linkify: true, breaks: false, typographer: true });
 md.renderer.rules.heading_open = (tokens, index, options, _env, self) => { const token = tokens[index]; if (token.map) token.attrSet("data-source-line", String(token.map[0] + 1)); return self.renderToken(tokens, index, options); };
 md.core.ruler.after("block", "source_line_anchors", state => {
@@ -32,24 +32,35 @@ md.block.ruler.before("fence", "math_block", (state, startLine, endLine, silent)
   return true;
 });
 md.renderer.rules.math_block = (tokens, index) => `<div class="math-block" data-source-line="${tokens[index].map![0] + 1}">$$\n${md.utils.escapeHtml(tokens[index].content)}$$</div>\n`;
-const html = computed(() => md.render(props.modelValue));
+const inlineOpen = "@@MDTEX_INLINE_OPEN@@", inlineClose = "@@MDTEX_INLINE_CLOSE@@", blockOpen = "@@MDTEX_BLOCK_OPEN@@", blockClose = "@@MDTEX_BLOCK_CLOSE@@";
+const html = computed(() => md.render(props.modelValue.replace(/\\\(/g, inlineOpen).replace(/\\\)/g, inlineClose).replace(/\\\[/g, blockOpen).replace(/\\\]/g, blockClose)).replaceAll(inlineOpen, "\\(").replaceAll(inlineClose, "\\)").replaceAll(blockOpen, "\\[").replaceAll(blockClose, "\\]"));
+const hasMath = computed(() => props.modelValue.includes("$") || props.modelValue.includes("\\(") || props.modelValue.includes("\\["));
 type MathJaxApi = { typesetClear?: (nodes?: HTMLElement[]) => void; typesetPromise?: (nodes?: HTMLElement[]) => Promise<void> };
 function mathJax() { return (window as Window & { MathJax?: MathJaxApi }).MathJax; }
-async function typeset() { await nextTick(); if (!ready.value || !root.value) return; const api = mathJax(); try { api?.typesetClear?.([root.value]); await api?.typesetPromise?.([root.value]); } catch { /* 保留原始 TeX，避免单个公式影响预览 */ } }
+let mathJaxLoading: Promise<void> | undefined; let typesetVersion = 0; let disposed = false;
+async function loadMathJax(): Promise<MathJaxApi | undefined> {
+  if (mathJax()?.typesetPromise) return mathJax();
+  if (!mathJaxLoading) {
+    (window as Window & { MathJax?: unknown }).MathJax = { tex: { inlineMath: [["$", "$"], ["\\(", "\\)"]], displayMath: [["$$", "$$"], ["\\[", "\\]"]] }, chtml: { matchFontHeight: false } };
+    mathJaxLoading = import("mathjax-full/es5/tex-chtml.js").then(() => undefined);
+  }
+  await mathJaxLoading;
+  return mathJax();
+}
+async function typeset(version: number) {
+  await nextTick();
+  if (disposed || version !== typesetVersion || !root.value || !hasMath.value) return;
+  const api = await loadMathJax();
+  if (disposed || version !== typesetVersion || !root.value) return;
+  try { api?.typesetClear?.([root.value]); await api?.typesetPromise?.([root.value]); } catch { /* 保留原始 TeX，避免单个公式影响预览 */ }
+}
 function setScrollPosition(ratio: number, sourceLine?: number) { nextTick(() => { if (!root.value) return; const anchors = [...root.value.querySelectorAll<HTMLElement>("[data-source-line]")]; const anchor = sourceLine === undefined ? undefined : anchors.filter((item) => Number(item.dataset.sourceLine) <= sourceLine).at(-1); if (anchor) { root.value.scrollTop = Math.max(0, anchor.offsetTop - 24); return; } const max = Math.max(0, root.value.scrollHeight - root.value.clientHeight); root.value.scrollTop = Math.max(0, Math.min(1, ratio)) * max; }); }
 defineExpose({ setScrollPosition }); function onScroll() { if (!root.value) return; const max = Math.max(1, root.value.scrollHeight - root.value.clientHeight); emit("scroll", root.value.scrollTop / max); }
-onMounted(async () => {
-  // The ES5 bundle is cached after the first load. Replacing its global API on
-  // a later mount (for example after Vite HMR) leaves no typesetPromise behind.
-  if (!mathJax()?.typesetPromise) {
-    (window as Window & { MathJax?: unknown }).MathJax = { tex: { inlineMath: [["$", "$"], ["\\(", "\\)"]], displayMath: [["$$", "$$"], ["\\[", "\\]"]] }, chtml: { matchFontHeight: false } };
-    await import("mathjax-full/es5/tex-chtml.js");
-  }
-  ready.value = true;
-  typeset();
-}); watch(html, typeset);
+onMounted(() => { typesetVersion += 1; void typeset(typesetVersion); });
+watch(html, () => { typesetVersion += 1; void typeset(typesetVersion); });
+onBeforeUnmount(() => { disposed = true; typesetVersion += 1; });
 </script>
-<template><article ref="root" class="preview" @scroll="onScroll" v-html="html" /></template>
+<template><article ref="root" class="preview" @scroll="onScroll" @contextmenu.prevent="emit('context-menu', $event.clientX, $event.clientY)" v-html="html" /></template>
 <style scoped>
 .preview { height: 100%; overflow: auto; padding: 24px; line-height: 1.75; color: var(--text); background: var(--panel); }
 .preview :deep(h1),.preview :deep(h2),.preview :deep(h3) { color: var(--accent); font-family: Georgia, "STSong", serif; }

@@ -30,7 +30,7 @@ export interface RepairPlan {
   id: string; source: string; revision: number; scope: RepairScope; target: RepairTarget;
   candidates: RepairCandidate[]; skipped: string[]; conflicts: string[]; createdAt: number;
 }
-export interface RepairSettings { enabledRuleIds: string[]; sectionNumberStartLevel: 1 | 2; }
+export interface RepairSettings { enabledRuleIds: string[]; sectionNumberStartLevel: number; sectionNumberEndLevel: number | null; }
 export const defaultRuleConfig: RuleConfig = {
   blankLines: 1, listMarker: "-", orderedListStyle: "incremental", separatorMinLength: 5,
   allowMultipleH1: false, ignoredRuleIds: [],

@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { computed, defineAsyncComponent, defineComponent, h, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { diffLines } from "diff";
 import { message } from "@tauri-apps/plugin-dialog";
-import MarkdownEditor from "./components/MarkdownEditor.vue";
-import MarkdownPreview from "./components/MarkdownPreview.vue";
+import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useDocumentStore } from "./stores/document";
 import {
   categoryLabels,
@@ -11,6 +11,7 @@ import {
   rulesForCategory,
   mutuallyExclusiveRules,
   ruleDescriptions,
+  ruleById,
 } from "./repair/registry";
 import { editsForPlan } from "./repair/planner";
 import {
@@ -20,6 +21,7 @@ import {
   deleteSection,
   autoNumberSections,
   renumberSections,
+  numberSectionBranch,
   moveSectionBefore,
 } from "./core/sections";
 import {
@@ -27,9 +29,30 @@ import {
   chooseSavePath,
   fileNameFromPath,
   readMarkdown,
+  readStartupText,
   writeMarkdown,
+  isDesktopApp,
+  isSupportedTextPath,
 } from "./services/nativeFiles";
 import type { RepairCategory, RepairPlan, RepairTarget } from "./types";
+
+const LoadingPane = defineComponent({
+  name: "LoadingPane",
+  setup: () => () => h("div", { class: "panel-loading", role: "status" }, "正在加载…"),
+});
+// CodeMirror and markdown-it are substantial dependencies. Loading them after
+// the app shell paints prevents their parsing from holding the native window on
+// a white screen during startup.
+const MarkdownEditor = defineAsyncComponent({
+  loader: () => import("./components/MarkdownEditor.vue"),
+  loadingComponent: LoadingPane,
+  delay: 0,
+});
+const MarkdownPreview = defineAsyncComponent({
+  loader: () => import("./components/MarkdownPreview.vue"),
+  loadingComponent: LoadingPane,
+  delay: 0,
+});
 
 const store = useDocumentStore();
 const sideTab = ref<"sections" | "issues">("sections");
@@ -39,8 +62,12 @@ const sourceEditor = ref<{
   scrollToPosition: (p: number) => void;
   highlightRange: (from: number, to: number) => void;
   setScrollRatio: (r: number) => void;
+  scrollToLine: (line: number) => void;
+  copySelection: () => Promise<void>;
+  cutSelection: () => Promise<void>;
+  pasteClipboard: () => Promise<void>;
 }>();
-const repairEditor = ref<{ setScrollRatio: (r: number) => void }>();
+const repairEditor = ref<{ setScrollRatio: (r: number) => void; scrollToLine: (line: number) => void; copySelection: () => Promise<void> }>();
 const preview = ref<{
   setScrollPosition: (ratio: number, sourceLine?: number) => void;
 }>();
@@ -48,6 +75,10 @@ const diffRoot = ref<HTMLElement>();
 const menu = ref<"file" | "formula" | "other" | "history" | null>(null);
 const settingsOpen = ref(false);
 const context = ref<{ id: string; x: number; y: number }>();
+const issueContext = ref<{ x: number; y: number }>();
+type ContextPosition = { x: number; y: number; opensLeft: boolean; opensUp: boolean };
+const sourceContext = ref<ContextPosition>();
+const readonlyContext = ref<(ContextPosition & { kind: "repair" | "diff" | "preview" })>();
 const dragging = ref<string>();
 const dragOverSectionId = ref<string>();
 const lastPreview = ref<"source" | "repair">("source");
@@ -72,10 +103,28 @@ const pendingFullNumbering = ref(false);
 const repairText = computed(() =>
   store.preview(editsForPlan(currentPlan.value, selectedPlanIds.value)),
 );
-const diffs = computed(() => diffLines(store.text, repairText.value));
-const previewText = computed(() =>
+const diffs = computed(() => {
+  let sourceLine = 1;
+  return diffLines(store.text, repairText.value).flatMap((part) =>
+    (part.value.match(/[^\n]*\n|[^\n]+/g) || []).map((value) => {
+      const line = sourceLine;
+      if (!part.added) sourceLine += 1;
+      return { added: part.added, removed: part.removed, value, sourceLine: line };
+    }),
+  );
+});
+const previewSource = computed(() =>
   lastPreview.value === "repair" ? repairText.value : store.text,
 );
+// Keep source editing on CodeMirror's fast path. Rendering Markdown and MathJax
+// only starts after the user pauses, and never while the preview is unmounted.
+const renderedPreviewText = ref(previewSource.value);
+const centerScroll = ref({ ratio: 0, line: 1 });
+const repairPreviewLabel = computed(() => {
+  if (currentPlan.value.target.kind === "automatic") return "一键修复预览";
+  if (currentPlan.value.target.kind === "category") return `${categoryLabels[currentPlan.value.target.id]}修复预览`;
+  return `${ruleById(currentPlan.value.target.id)?.label ?? "修复"}修复预览`;
+});
 const issues = computed(() => currentPlan.value.candidates);
 const categories = Object.keys(categoryLabels) as RepairCategory[];
 const issueGroups = computed(() =>
@@ -93,6 +142,8 @@ const issueGroups = computed(() =>
 );
 const expandedIssueCategories = ref<Record<string, boolean>>({});
 const expandedIssueRules = ref<Record<string, boolean>>({});
+let refreshTimer: number | undefined;
+let previewTimer: number | undefined;
 const workspaceStyle = computed(() => ({
   gridTemplateColumns: `${leftCollapsed.value ? 32 : leftWidth.value}px minmax(360px,1fr) ${rightCollapsed.value ? 32 : rightWidth.value}px`,
 }));
@@ -100,6 +151,7 @@ const expandedCategories = ref<Record<string, boolean>>(
   Object.fromEntries(categories.map((category) => [category, true])),
 );
 const collapsedSections = ref(new Set<string>());
+const scrollingSectionId = ref<string>();
 const sectionRows = computed(() => {
   const rows: (typeof store.sections)[number][] = [];
   const visit = (node: (typeof store.sections)[number]) => {
@@ -120,18 +172,21 @@ const examples: Record<string, string> = {
   "formula-inline-double-dollar-to-single": "文本 $$x+y$$ → 文本 $x+y$",
   "formula-restore-missing-delimiter": "(x+y=1) → \\(x+y=1\\)",
   "spacing-cjk-latin": "中文Markdown → 中文 Markdown",
+  "spacing-cjk-latin-remove": "中文 Markdown → 中文Markdown",
   "spacing-cjk-number": "第2章 → 第 2 章",
+  "spacing-cjk-number-remove": "第 2 章 → 第2章",
   "spacing-number-unit": "20kg → 20 kg",
+  "spacing-number-unit-remove": "20 kg → 20kg",
   "section-auto-number": "## 方法 → ## 1.1 方法",
   "section-renumber": "## 3.8 方法 → ## 1.2 方法",
   "formula-code-wrapper": "`$E=mc^2$` → $E=mc^2$",
-  "formula-block-normalize": "$$\\n  x^2 + y^2  \\n$$ → $$\\nx^2 + y^2\\n$$",
 };
 interface Profile {
   id: string;
   name: string;
   enabledRuleIds: string[];
-  sectionNumberStartLevel: 1 | 2;
+  sectionNumberStartLevel: number;
+  sectionNumberEndLevel: number | null;
   builtIn?: boolean;
 }
 const profileKey = "mdtool.repair-profiles.v1";
@@ -155,6 +210,7 @@ function loadProfiles(): Profile[] {
       name: "默认安全方案",
       enabledRuleIds: [...store.repairSettings.enabledRuleIds],
       sectionNumberStartLevel: store.repairSettings.sectionNumberStartLevel,
+      sectionNumberEndLevel: store.repairSettings.sectionNumberEndLevel,
       builtIn: true,
     },
   ];
@@ -196,6 +252,7 @@ function activateProfile(id: string) {
   store.updateRepairSettings({
     enabledRuleIds: profile.enabledRuleIds,
     sectionNumberStartLevel: profile.sectionNumberStartLevel,
+    sectionNumberEndLevel: profile.sectionNumberEndLevel,
   });
   refreshAutomatic();
 }
@@ -227,6 +284,7 @@ function saveProfile() {
     name,
     enabledRuleIds: [...store.repairSettings.enabledRuleIds],
     sectionNumberStartLevel: store.repairSettings.sectionNumberStartLevel,
+    sectionNumberEndLevel: store.repairSettings.sectionNumberEndLevel,
   };
   profiles.value.push(profile);
   activeProfileId.value = profile.id;
@@ -276,10 +334,13 @@ function exclusivePeerLabel(id: string) {
         ?.label
     : "";
 }
-function setSectionNumberStartLevel(level: 1 | 2) {
+function setSectionNumberRange(startValue: string, endValue: string) {
+  const start = startValue.trim() ? Number(startValue) : 1;
+  const end = endValue.trim() ? Number(endValue) : null;
   store.updateRepairSettings({
     ...store.repairSettings,
-    sectionNumberStartLevel: level,
+    sectionNumberStartLevel: start,
+    sectionNumberEndLevel: end,
   });
   refreshAutomatic();
 }
@@ -312,6 +373,32 @@ function openSectionContext(id: string, event: MouseEvent) {
   store.selectedSectionId = id;
   context.value = { id, x: event.clientX, y: event.clientY };
 }
+function collapseAllSections() { collapsedSections.value = new Set(store.sections.filter(section => section.children.length).map(section => section.id)); }
+function expandAllSections() { collapsedSections.value = new Set(); }
+function collapseAllIssues() {
+  expandedIssueCategories.value = Object.fromEntries(categories.map(category => [category, false]));
+  expandedIssueRules.value = Object.fromEntries(repairRules.map(rule => [rule.id, false]));
+}
+function expandAllIssues() {
+  expandedIssueCategories.value = Object.fromEntries(categories.map(category => [category, true]));
+  expandedIssueRules.value = Object.fromEntries(repairRules.map(rule => [rule.id, true]));
+}
+function openIssueContext(event: MouseEvent) { issueContext.value = { x: event.clientX, y: event.clientY }; }
+function visibleScrollingSection(id: string): string {
+  let section = store.sections.find(item => item.id === id);
+  while (section?.parentId) {
+    const parent = store.sections.find(item => item.id === section!.parentId);
+    if (!parent) break;
+    if (collapsedSections.value.has(parent.id)) return parent.id;
+    section = parent;
+  }
+  return id;
+}
+function revealScrollingSection(id: string) {
+  nextTick(() => document.querySelector<HTMLElement>(`[data-section-row-id="${id}"]`)?.scrollIntoView({ block: "center", behavior: "smooth" }));
+}
+watch(scrollingSectionId, (id) => { if (id && sideTab.value === "sections") revealScrollingSection(id); });
+watch(sideTab, (tab) => { if (tab === "sections" && scrollingSectionId.value) revealScrollingSection(scrollingSectionId.value); });
 function toggleIssueCategory(category: RepairCategory) {
   expandedIssueCategories.value[category] =
     !expandedIssueCategories.value[category];
@@ -326,21 +413,63 @@ function refreshAutomatic() {
 watch(
   () => store.text,
   () => {
-    refreshAutomatic();
+    window.clearTimeout(refreshTimer);
+    refreshTimer = window.setTimeout(refreshAutomatic, 180);
     if (centerTab.value === "source") lastPreview.value = "source";
   },
 );
+function schedulePreviewRefresh() {
+  window.clearTimeout(previewTimer);
+  if (rightCollapsed.value) return;
+  previewTimer = window.setTimeout(() => {
+    renderedPreviewText.value = previewSource.value;
+  }, 300);
+}
+watch(previewSource, schedulePreviewRefresh);
+watch(rightCollapsed, (collapsed) => {
+  window.clearTimeout(previewTimer);
+  // The component is absent while collapsed. On reopening, render the latest
+  // document once instead of replaying work that accumulated while hidden.
+  if (!collapsed) renderedPreviewText.value = previewSource.value;
+});
+function scrollDiffToLine(line: number) {
+  const root = diffRoot.value;
+  if (!root) return;
+  const rows = [...root.querySelectorAll<HTMLElement>("[data-source-line]")];
+  const target = rows.find((row) => Number(row.dataset.sourceLine) >= line) ?? rows.at(-1);
+  if (target) root.scrollTop = Math.max(0, target.offsetTop - root.clientHeight / 2 + target.offsetHeight / 2);
+}
+function restoreCenterPosition(tab: "source" | "repair" | "diff") {
+  const { line } = centerScroll.value;
+  nextTick(() => {
+    if (tab === "source") {
+      sourceEditor.value?.scrollToLine(line);
+    } else if (tab === "repair") {
+      repairEditor.value?.scrollToLine(line);
+    }
+    else scrollDiffToLine(line);
+  });
+}
 function selectCenter(tab: "source" | "repair" | "diff") {
   centerTab.value = tab;
   if (tab !== "diff") lastPreview.value = tab;
+  restoreCenterPosition(tab);
 }
 function syncScroll(ratio: number, sourceLine?: number) {
+  if (sourceLine !== undefined) {
+    centerScroll.value = { ratio, line: sourceLine };
+    const offset = store.text.split("\n").slice(0, Math.max(0, sourceLine - 1)).join("\n").length;
+    const sectionId = store.sections.filter(section => section.headingFrom <= offset).at(-1)?.id;
+    scrollingSectionId.value = sectionId ? visibleScrollingSection(sectionId) : undefined;
+  }
   preview.value?.setScrollPosition(ratio, sourceLine);
 }
 function onDiffScroll() {
   const el = diffRoot.value;
-  if (el)
-    syncScroll(el.scrollTop / Math.max(1, el.scrollHeight - el.clientHeight));
+  if (!el) return;
+  const viewportMiddle = el.scrollTop + el.clientHeight / 2;
+  const first = [...el.querySelectorAll<HTMLElement>("[data-source-line]")].find(item => item.offsetTop + item.offsetHeight > viewportMiddle);
+  syncScroll(el.scrollTop / Math.max(1, el.scrollHeight - el.clientHeight), first ? Number(first.dataset.sourceLine) : undefined);
 }
 function jump(from: number, to = from + 1) {
   selectCenter("source");
@@ -435,20 +564,41 @@ async function resolveUnsaved(): Promise<boolean> {
       kind: "warning",
       buttons: { yes: "保存", no: "放弃", cancel: "取消" },
     }),
-  ).toLowerCase();
-  return result === "yes" ? saveDocument() : result === "no";
+  );
+  // Custom dialog buttons return their displayed label on Windows, rather than
+  // the internal `yes` / `no` identifiers used by the default dialog buttons.
+  if (result === "保存" || result.toLowerCase() === "yes") return saveDocument();
+  return result === "放弃" || result.toLowerCase() === "no";
 }
 async function newDocument() {
   if (await resolveUnsaved()) store.loadDocument("");
 }
 async function openDocument() {
-  if (!(await resolveUnsaved())) return;
   const path = await chooseMarkdownFile();
-  if (path)
+  if (path) await openPath(path);
+}
+async function openPath(path: string, confirmUnsaved = true) {
+  if (!isSupportedTextPath(path)) {
+    const detail = `不支持的文件格式：${fileNameFromPath(path)}`;
+    status.value = detail;
+    if (isDesktopApp()) await message(detail, { title: "无法打开文件", kind: "error" });
+    return;
+  }
+  if (confirmUnsaved && !(await resolveUnsaved())) return;
+  try {
     store.loadDocument(await readMarkdown(path), {
       filePath: path,
       fileName: fileNameFromPath(path),
     });
+    status.value = `已打开 ${fileNameFromPath(path)}`;
+  } catch (error) { status.value = error instanceof Error ? `无法作为文本打开：${error.message}` : "不支持或无法打开该文件"; }
+}
+async function openStartupPath(path: string) {
+  if (!isSupportedTextPath(path)) return openPath(path, false);
+  try {
+    store.loadDocument(await readStartupText(path), { filePath: path, fileName: fileNameFromPath(path) });
+    status.value = `已打开 ${fileNameFromPath(path)}`;
+  } catch (error) { status.value = error instanceof Error ? `无法作为文本打开：${error.message}` : "不支持或无法打开该文件"; }
 }
 function sectionAction(action: string) {
   const id = context.value?.id;
@@ -461,11 +611,33 @@ function sectionAction(action: string) {
   if (action === "delete") run("删除章节", deleteSection(store.text, id));
   context.value = undefined;
 }
-function startSectionDrag(id: string, event: DragEvent) {
-  selectSection(id);
-  dragging.value = id;
-  event.dataTransfer?.setData("text/plain", id);
-  if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
+let stopSectionPointerDrag: (() => void) | undefined;
+let sectionPointerDrag: { id: string; pointerId: number; x: number; y: number; active: boolean } | undefined;
+function startSectionPointerDrag(id: string, event: PointerEvent) {
+  if (event.pointerType === "mouse" && event.button !== 0) return;
+  stopSectionPointerDrag?.();
+  sectionPointerDrag = { id, pointerId: event.pointerId, x: event.clientX, y: event.clientY, active: false };
+  const onMove = (next: PointerEvent) => {
+    if (!sectionPointerDrag || next.pointerId !== sectionPointerDrag.pointerId) return;
+    const distance = Math.hypot(next.clientX - sectionPointerDrag.x, next.clientY - sectionPointerDrag.y);
+    if (distance < 5) return;
+    sectionPointerDrag.active = true;
+    dragging.value = id;
+    const target = document.elementFromPoint(next.clientX, next.clientY)?.closest<HTMLElement>("[data-section-id]");
+    dragOverSectionId.value = target?.dataset.sectionId;
+    next.preventDefault();
+  };
+  const finish = (next: PointerEvent) => {
+    if (!sectionPointerDrag || next.pointerId !== sectionPointerDrag.pointerId) return;
+    const target = document.elementFromPoint(next.clientX, next.clientY)?.closest<HTMLElement>("[data-section-id]");
+    const targetId = target?.dataset.sectionId;
+    const wasDragging = sectionPointerDrag.active;
+    stopSectionPointerDrag?.();
+    if (wasDragging && targetId) dropSection(targetId);
+  };
+  stopSectionPointerDrag = () => { window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerup", finish); sectionPointerDrag = undefined; if (!dragging.value) dragOverSectionId.value = undefined; };
+  window.addEventListener("pointermove", onMove, { passive: false });
+  window.addEventListener("pointerup", finish);
 }
 function dropSection(targetId: string) {
   if (!dragging.value || dragging.value === targetId) return;
@@ -476,9 +648,48 @@ function dropSection(targetId: string) {
   dragging.value = undefined;
   dragOverSectionId.value = undefined;
 }
+async function sourceClipboard(action: "copy" | "paste" | "cut") {
+  try {
+    await sourceEditor.value?.[action === "copy" ? "copySelection" : action === "paste" ? "pasteClipboard" : "cutSelection"]();
+    status.value = action === "copy" ? "已复制" : action === "paste" ? "已粘贴" : "已剪切";
+  } catch (error) { status.value = error instanceof Error ? `剪贴板操作失败：${error.message}` : "剪贴板操作失败"; }
+  sourceContext.value = undefined;
+}
+function startSourceRule(id: string) { sourceContext.value = undefined; startManual({ kind: "rule", id }); }
+function contextPosition(x: number, y: number): ContextPosition {
+  const menuWidth = 170; const menuHeight = 178;
+  return { x: Math.max(6, Math.min(x, window.innerWidth - menuWidth - 6)), y: Math.max(6, Math.min(y, window.innerHeight - menuHeight - 6)), opensLeft: x > window.innerWidth - 430, opensUp: y > window.innerHeight - 320 };
+}
+function openSourceContext(x: number, y: number) { sourceContext.value = contextPosition(x, y); }
+function openReadonlyContext(kind: "repair" | "diff" | "preview", x: number, y: number) { readonlyContext.value = { kind, ...contextPosition(x, y) }; }
+async function copyReadonly() {
+  try {
+    if (readonlyContext.value?.kind === "repair") await repairEditor.value?.copySelection();
+    else await navigator.clipboard.writeText(window.getSelection()?.toString() ?? "");
+    status.value = "已复制";
+  } catch (error) { status.value = error instanceof Error ? `复制失败：${error.message}` : "复制失败"; }
+  readonlyContext.value = undefined;
+}
 onBeforeUnmount(() => {
-  /* pointer listeners remove themselves on pointerup */
+  window.clearTimeout(refreshTimer);
+  window.clearTimeout(previewTimer);
+  stopSectionPointerDrag?.();
 });
+let unlistenClose: (() => void) | undefined; let unlistenDrop: (() => void) | undefined;
+onMounted(async () => {
+  if (!isDesktopApp()) return;
+  const window = getCurrentWindow();
+  unlistenClose = await window.onCloseRequested(async event => {
+    // Always claim the native request synchronously. On Windows, allowing it
+    // through after an async dialog can leave the webview process alive.
+    event.preventDefault();
+    if (await resolveUnsaved()) await invoke("exit_app");
+  });
+  unlistenDrop = await window.onDragDropEvent(async event => { if (event.payload.type === "drop") await openPath(event.payload.paths[0]); });
+  const paths = await invoke<string[]>("startup_paths");
+  if (paths[0]) await openStartupPath(paths[0]);
+});
+onBeforeUnmount(() => { unlistenClose?.(); unlistenDrop?.(); });
 </script>
 <template>
   <main
@@ -487,6 +698,9 @@ onBeforeUnmount(() => {
     @click="
       menu = null;
       context = undefined;
+      issueContext = undefined;
+      sourceContext = undefined;
+      readonlyContext = undefined;
     "
   >
     <header class="menubar" @click.stop>
@@ -569,7 +783,7 @@ onBeforeUnmount(() => {
           title="生成当前规则的全文修复预览"
           @click="oneClick"
         >
-          一键修复
+          一键修复预览
         </button>
         <div class="history-anchor undo-group">
           <button
@@ -602,8 +816,7 @@ onBeforeUnmount(() => {
               ><span v-if="!store.history.list().length">暂无可撤销操作</span>
             </div>
           </div>
-        </div>
-        <button
+        </div><button
           class="icon-button"
           title="重做"
           aria-label="重做"
@@ -614,10 +827,10 @@ onBeforeUnmount(() => {
             <path d="M19 8V4l-3 3a7 7 0 1 0 2.1 8.2" />
             <path d="M16 4h3v3" />
           </svg>
-        </button>
-        <span class="status-text">{{ status }}</span>
+        </button><span class="file-name" :class="{ dirty: store.dirty }">{{ store.fileName }}{{ store.dirty ? " •" : "" }}</span>
       </div>
       <div class="menu-status">
+        <span class="status-text">{{ status }}</span>
         <button
           class="icon-button theme-toggle"
           :title="theme === 'dark' ? '切换到浅色模式' : '切换到深色模式'"
@@ -666,8 +879,10 @@ onBeforeUnmount(() => {
               v-for="section in sectionRows"
               :key="section.id"
               class="section-row"
+              :data-section-row-id="section.id"
               :class="{
                 active: store.selectedSectionId === section.id,
+                scrolling: scrollingSectionId === section.id && store.selectedSectionId !== section.id,
                 dragging: dragging === section.id,
                 'drag-over':
                   dragOverSectionId === section.id && dragging !== section.id,
@@ -693,15 +908,8 @@ onBeforeUnmount(() => {
               ><span v-else class="tree-spacer" />
               <button
                 class="section-button"
-                draggable="true"
-                @dragstart="startSectionDrag(section.id, $event)"
-                @dragend="
-                  dragging = undefined;
-                  dragOverSectionId = undefined;
-                "
-                @dragover.prevent="dragOverSectionId = section.id"
-                @dragleave="dragOverSectionId = undefined"
-                @drop.prevent="dropSection(section.id)"
+                :data-section-id="section.id"
+                @pointerdown.prevent="startSectionPointerDrag(section.id, $event)"
                 @click="selectSection(section.id)"
                 @contextmenu.prevent="openSectionContext(section.id, $event)"
               >
@@ -710,7 +918,7 @@ onBeforeUnmount(() => {
               </button>
             </div>
           </div>
-          <div v-else class="side-list issue-tree">
+          <div v-else class="side-list issue-tree" @contextmenu.prevent="openIssueContext($event)">
             <section
               v-for="group in issueGroups"
               :key="group.category"
@@ -810,31 +1018,34 @@ onBeforeUnmount(() => {
             :disabled="!selectedPlanIds.length"
             @click="applyPlan"
           >
-            应用预览（{{ selectedPlanIds.length }}）
+            {{ repairPreviewLabel }} · 应用预览（{{ selectedPlanIds.length }}）
           </button>
         </nav>
         <MarkdownEditor
-          v-if="centerTab === 'source'"
+          v-show="centerTab === 'source'"
           ref="sourceEditor"
           :model-value="store.text"
           @update:model-value="store.replace"
-          @paste-document="store.loadPastedDocument"
           @selection-change="(from, to) => store.setSelection({ from, to })"
           @scroll="syncScroll"
           @undo="undo"
           @redo="redo"
+          @save="saveDocument()"
+          @context-menu="openSourceContext"
         /><MarkdownEditor
-          v-else-if="centerTab === 'repair'"
+          v-show="centerTab === 'repair'"
           ref="repairEditor"
           :model-value="repairText"
           readonly
           @scroll="syncScroll"
+          @context-menu="(x, y) => openReadonlyContext('repair', x, y)"
         />
-        <article v-else ref="diffRoot" class="diff" @scroll="onDiffScroll">
+        <article v-show="centerTab === 'diff'" ref="diffRoot" class="diff" @scroll="onDiffScroll" @contextmenu.prevent="openReadonlyContext('diff', $event.clientX, $event.clientY)">
           <pre
             v-for="(part, index) in diffs"
             :key="index"
             :class="{ added: part.added, removed: part.removed }"
+            :data-source-line="part.sourceLine"
             >{{ part.value }}</pre
           >
         </article>
@@ -859,7 +1070,7 @@ onBeforeUnmount(() => {
               </svg>
             </button>
           </p>
-          <MarkdownPreview ref="preview" :model-value="previewText" /></template
+          <MarkdownPreview ref="preview" :model-value="renderedPreviewText" @context-menu="(x, y) => openReadonlyContext('preview', x, y)" /></template
         ><button
           v-else
           class="expand-rail"
@@ -873,6 +1084,35 @@ onBeforeUnmount(() => {
       </aside>
     </section>
     <div
+      v-if="sourceContext"
+      class="context source-context"
+      :class="{ 'opens-left': sourceContext.opensLeft, 'opens-up': sourceContext.opensUp }"
+      :style="{ left: `${sourceContext.x}px`, top: `${sourceContext.y}px` }"
+      @click.stop
+    >
+      <button @click="sourceClipboard('copy')">复制</button>
+      <button @click="sourceClipboard('paste')">粘贴</button>
+      <button @click="sourceClipboard('cut')">剪切</button>
+      <div class="context-submenu">
+        <button>公式修复 <span>›</span></button>
+        <div class="context-submenu-panel">
+          <button v-for="rule in rulesForCategory('formula')" :key="rule.id" :title="ruleDescriptions[rule.id]" @click="startSourceRule(rule.id)">{{ rule.label }}</button>
+        </div>
+      </div>
+      <div class="context-submenu">
+        <button>其他修复 <span>›</span></button>
+        <div class="context-submenu-panel">
+          <template v-for="category in categories.filter(category => category !== 'formula')" :key="category">
+            <strong>{{ categoryLabels[category] }}</strong>
+            <button v-for="rule in rulesForCategory(category)" :key="rule.id" :title="ruleDescriptions[rule.id]" @click="rule.id === 'section-auto-number' ? (sourceContext = undefined, requestFullNumbering()) : startSourceRule(rule.id)">{{ rule.label }}</button>
+          </template>
+        </div>
+      </div>
+    </div>
+    <div v-if="readonlyContext" class="context readonly-context" :style="{ left: `${readonlyContext.x}px`, top: `${readonlyContext.y}px` }" @click.stop>
+      <button @click="copyReadonly">复制</button>
+    </div>
+    <div
       v-if="context"
       class="context"
       :style="{ left: `${context.x}px`, top: `${context.y}px` }"
@@ -885,25 +1125,31 @@ onBeforeUnmount(() => {
       ><button
         @click="
           run(
-            '为选中章节添加编号',
-            autoNumberSections(
-              store.text,
-              store.repairSettings.sectionNumberStartLevel,
-              context?.id,
-            ),
+            '重排选中章节所有编号', numberSectionBranch(store.text, context!.id, true),
           );
           context = undefined;
         "
       >
-        添加编号</button
+        重排所有编号</button
       ><button
         @click="
-          run('为选中章节重排编号', renumberSections(store.text, context?.id));
+          run('重排选中章节已有编号', numberSectionBranch(store.text, context!.id, false));
           context = undefined;
         "
       >
-        重排编号</button
+        重排已有编号</button
       ><button @click="sectionAction('delete')">删除章节</button>
+      ><button @click="collapseAllSections(); context = undefined">全部折叠</button
+      ><button @click="expandAllSections(); context = undefined">全部展开</button>
+    </div>
+    <div
+      v-if="issueContext"
+      class="context"
+      :style="{ left: `${issueContext.x}px`, top: `${issueContext.y}px` }"
+      @click.stop
+    >
+      <button @click="collapseAllIssues(); issueContext = undefined">全部折叠</button
+      ><button @click="expandAllIssues(); issueContext = undefined">全部展开</button>
     </div>
     <div v-if="pendingManual" class="modal">
       <section>
@@ -920,25 +1166,12 @@ onBeforeUnmount(() => {
     </div>
     <div v-if="pendingFullNumbering" class="modal">
       <section>
-        <h3>为所有章节添加编号</h3>
-        <p>添加编号时是否排除一级标题？</p>
+        <h3>重排所有章节编号</h3>
+        <p>填写标题级别范围，例如 1-、2- 或 2-4；留空的起始级别默认为 1。</p>
         <div class="numbering-choice">
-          <label
-            ><input
-              type="radio"
-              :checked="store.repairSettings.sectionNumberStartLevel === 1"
-              @change="setSectionNumberStartLevel(1)"
-            />
-            不排除，一级标题也编号</label
-          >
-          <label
-            ><input
-              type="radio"
-              :checked="store.repairSettings.sectionNumberStartLevel === 2"
-              @change="setSectionNumberStartLevel(2)"
-            />
-            排除，一级标题不编号</label
-          >
+          <input aria-label="编号起始级别" type="number" min="1" max="6" :value="store.repairSettings.sectionNumberStartLevel" @change="setSectionNumberRange(($event.target as HTMLInputElement).value, String(store.repairSettings.sectionNumberEndLevel ?? ''))" />
+          <span>－</span>
+          <input aria-label="编号结束级别" type="number" min="1" max="6" :value="store.repairSettings.sectionNumberEndLevel ?? ''" @change="setSectionNumberRange(String(store.repairSettings.sectionNumberStartLevel), ($event.target as HTMLInputElement).value)" />
         </div>
         <div class="modal-actions">
           <button @click="pendingFullNumbering = false">取消</button
@@ -954,18 +1187,12 @@ onBeforeUnmount(() => {
       @click.self="settingsOpen = false"
     >
       <section class="settings-shell">
+        <button class="close" aria-label="关闭设置" @click="settingsOpen = false">×</button>
         <aside>
           <h3>设置</h3>
           <button class="active">一键修复规则</button>
         </aside>
         <div class="settings-content">
-          <button
-            class="close"
-            aria-label="关闭设置"
-            @click="settingsOpen = false"
-          >
-            ×
-          </button>
           <header>
             <h2>一键修复规则</h2>
             <span>在修复预览中实时为全文应用以下规则，并可一键修复。</span>
@@ -1057,26 +1284,7 @@ onBeforeUnmount(() => {
                   v-if="rule.id === 'section-auto-number'"
                   class="sub-setting"
                 >
-                  <span>为所有章节添加编号时</span
-                  ><label
-                    ><input
-                      type="radio"
-                      :checked="
-                        store.repairSettings.sectionNumberStartLevel === 1
-                      "
-                      @change="setSectionNumberStartLevel(1)"
-                    />
-                    包含一级标题</label
-                  ><label
-                    ><input
-                      type="radio"
-                      :checked="
-                        store.repairSettings.sectionNumberStartLevel === 2
-                      "
-                      @change="setSectionNumberStartLevel(2)"
-                    />
-                    排除一级标题</label
-                  >
+                  <span>重排标题级别范围</span><div class="range-inputs"><input aria-label="设置编号起始级别" type="number" min="1" max="6" :value="store.repairSettings.sectionNumberStartLevel" @change="setSectionNumberRange(($event.target as HTMLInputElement).value, String(store.repairSettings.sectionNumberEndLevel ?? ''))" /><span>－</span><input aria-label="设置编号结束级别" type="number" min="1" max="6" :value="store.repairSettings.sectionNumberEndLevel ?? ''" @change="setSectionNumberRange(String(store.repairSettings.sectionNumberStartLevel), ($event.target as HTMLInputElement).value)" /></div><small>示例：1- 重排全部标题；2- 从二级标题开始；2-4 仅重排二至四级标题；-4 等同于 1-4。</small>
                 </div></template
               >
             </div>
@@ -1128,6 +1336,14 @@ select {
 button {
   cursor: pointer;
 }
+.panel-loading {
+  display: grid;
+  height: 100%;
+  min-height: 0;
+  place-items: center;
+  color: var(--muted);
+  background: var(--panel);
+}
 .app {
   --bg: #071012;
   --bar: #0a1517;
@@ -1154,6 +1370,7 @@ button {
   color: var(--text);
   color-scheme: dark;
   cursor: default;
+  user-select: none;
 }
 .app[data-theme="light"] {
   --bg: #f1f4f2;
@@ -1247,6 +1464,15 @@ button {
   color: var(--muted);
   white-space: nowrap;
 }
+.file-name {
+  max-width: 180px;
+  overflow: hidden;
+  margin: 0 6px;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.file-name.dirty { color: var(--accent); font-weight: 600; }
 .undo-group {
   align-items: stretch;
   height: 31px;
@@ -1478,6 +1704,7 @@ button {
   color: var(--accent);
   box-shadow: inset 2px 0 var(--accent);
 }
+.section-row.scrolling .section-button { color: var(--accent); font-weight: 700; }
 .side-list small {
   display: block;
   color: var(--muted);
@@ -1620,6 +1847,11 @@ button {
 .collapsed {
   overflow: hidden;
 }
+.editor,
+.diff,
+.preview {
+  user-select: text;
+}
 .diff {
   overflow: auto;
   padding: 20px;
@@ -1653,6 +1885,29 @@ button {
 .context button {
   text-align: left;
 }
+.source-context { min-width: 148px; }
+.context-submenu { position: relative; }
+.context-submenu > button { display: flex; justify-content: space-between; width: 100%; gap: 18px; }
+.context-submenu-panel {
+  position: absolute;
+  z-index: 1;
+  top: -5px;
+  left: calc(100% + 5px);
+  display: none;
+  min-width: 220px;
+  max-height: min(70vh, 480px);
+  overflow: auto;
+  padding: 5px;
+  background: var(--bar);
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  box-shadow: 0 10px 28px #0005;
+}
+.source-context.opens-left .context-submenu-panel { left: auto; right: calc(100% + 5px); }
+.source-context.opens-up .context-submenu-panel { top: auto; bottom: -5px; }
+.context-submenu:hover > .context-submenu-panel,
+.context-submenu:focus-within > .context-submenu-panel { display: grid; }
+.context-submenu-panel strong { padding: 7px 8px 3px; color: var(--muted); font-size: 12px; }
 .modal {
   position: fixed;
   inset: 0;
@@ -1674,16 +1929,14 @@ button {
   justify-content: flex-end;
 }
 .numbering-choice {
-  display: grid;
+  display: flex;
+  align-items: center;
   gap: 9px;
   margin: 16px 0;
 }
-.numbering-choice label {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
+.numbering-choice input,.sub-setting input { width: 62px; padding: 6px; color: var(--text); background: var(--editor); border: 1px solid var(--border); border-radius: 5px; }
 .settings-shell {
+  position: relative;
   width: min(900px, 94vw);
   height: min(680px, 86vh);
   display: grid;
@@ -1738,12 +1991,12 @@ button {
   color: var(--accent);
   letter-spacing: 0.08em;
 }
-.close {
-  position: sticky;
-  float: right;
-  top: 0;
+.settings-shell > .close {
+  position: absolute;
+  right: 14px;
+  top: 12px;
   z-index: 3;
-  margin: -20px -26px 0 0;
+  margin: 0;
   background: var(--bar) !important;
   border: 1px solid var(--border) !important;
   box-shadow: 0 3px 10px #0003;
@@ -1811,6 +2064,8 @@ button {
   color: var(--muted);
   font-size: 12px;
 }
+.range-inputs { display: inline-flex; align-items: center; gap: 7px; width: fit-content; }
+.sub-setting > small { color: var(--muted); line-height: 1.55; }
 .profile-section-top {
   margin: 0 0 18px;
   padding: 0 0 18px;

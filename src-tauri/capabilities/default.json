@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "允许 mdTool 通过用户选择的文件路径打开、保存 Markdown 文件。",
   "windows": ["main"],
-  "permissions": ["core:default", "dialog:default", "fs:default"]
+  "permissions": ["core:default", "dialog:default", "fs:default", "fs:allow-read-text-file", "fs:allow-write-text-file"]
 }

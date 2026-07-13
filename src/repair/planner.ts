@@ -6,7 +6,7 @@ import { autoNumberSections, renumberSections } from "../core/sections";
 import type { RepairCandidate, RepairPlan, RepairScope, RepairSettings, RepairTarget, RuleConfig, TextEdit, TextSelection } from "../types";
 import { ruleById } from "./registry";
 
-const formulaRules = new Set(["formula-trim", "formula-double-escape", "formula-block-separator", "formula-restore-separator", "formula-delimiter-latex", "formula-delimiter-dollar", "formula-display-dollar-to-single", "formula-inline-double-dollar-to-single", "formula-restore-missing-delimiter", "formula-code-wrapper", "formula-block-normalize"]);
+const formulaRules = new Set(["formula-trim", "formula-double-escape", "formula-block-separator", "formula-restore-separator", "formula-delimiter-latex", "formula-delimiter-dollar", "formula-display-dollar-to-single", "formula-inline-double-dollar-to-single", "formula-restore-missing-delimiter", "formula-code-wrapper"]);
 const overlaps = (a: TextEdit, b: TextEdit) => a.from < b.to && a.to > b.from;
 function candidate(id: string, ruleId: string, nodeFrom: number, nodeTo: number, edits: TextEdit[], text: string, confidence = 1): RepairCandidate | undefined {
   const rule = ruleById(ruleId); if (!rule || !edits.length) return undefined;
@@ -19,7 +19,7 @@ export function createRepairPlan(text: string, revision: number, config: RuleCon
   for (const item of diagnostics) { if (!item.autoFixable || item.replacement === undefined || formulaRules.has(item.ruleId)) continue; const itemCandidate = candidate(item.id, item.ruleId, item.from, item.to, [{ from: item.from, to: item.to, insert: item.replacement }], text, item.confidence); if (itemCandidate) raw.push(itemCandidate); }
   for (const item of formulaRuleEdits(text, config.separatorMinLength, config.latexCommands, options.settings.enabledRuleIds)) { const itemCandidate = candidate(item.id, item.ruleId, item.nodeFrom, item.nodeTo, [item.edit], text); if (itemCandidate) raw.push(itemCandidate); }
   for (const item of spacingRuleEdits(text, options.settings.enabledRuleIds)) { const itemCandidate = candidate(`${item.ruleId}:${item.edit.from}`, item.ruleId, item.nodeFrom, item.nodeTo, [item.edit], text); if (itemCandidate) raw.push(itemCandidate); }
-  if (options.settings.enabledRuleIds.includes("section-auto-number")) { const edits = autoNumberSections(text, options.settings.sectionNumberStartLevel); if (applyEdits(text, edits) !== text) { const itemCandidate = candidate("section-auto-number:document", "section-auto-number", 0, text.length, edits, text); if (itemCandidate) raw.push(itemCandidate); } }
+  if (options.settings.enabledRuleIds.includes("section-auto-number")) { const edits = autoNumberSections(text, options.settings.sectionNumberStartLevel, options.settings.sectionNumberEndLevel ?? 6); if (applyEdits(text, edits) !== text) { const itemCandidate = candidate("section-auto-number:document", "section-auto-number", 0, text.length, edits, text); if (itemCandidate) raw.push(itemCandidate); } }
   if (options.settings.enabledRuleIds.includes("section-renumber")) { const edits = renumberSections(text); if (applyEdits(text, edits) !== text) { const itemCandidate = candidate("section-renumber:document", "section-renumber", 0, text.length, edits, text); if (itemCandidate) raw.push(itemCandidate); } }
   let targetRules: Set<string> | undefined;
   if (target.kind === "category") targetRules = new Set(options.settings.enabledRuleIds.filter(id => ruleById(id)?.category === target.id));
