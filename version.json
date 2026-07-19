@@ -1,6 +1,8 @@
 {
   "version": "0.1.0",
   "notes": [
+    "🐞 fix: 修复linux编译未找到icon的bug",
+    "release: v0.1.0",
     "fix: make release command work on Windows",
     "🐞 fix: 修复发布脚本无法识别npm的bug",
     "🐞 fix: 修复发布失败bug",
