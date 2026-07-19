@@ -38,7 +38,7 @@ npm run tauri:dev
 | `npm test`            | 运行 Vitest 单元测试。                           |
 | `npm run test:watch`  | 以监听模式运行单元测试。                         |
 | `npm run test:e2e`    | 启动本地 Vite 服务并运行 Playwright 端到端测试。 |
-| `npm run release`     | 发布版本，自动在github action上编译并发布。      |
+| `npm run release`     | 交互选择版本（默认补丁）并自动在 GitHub Actions 发布。 |
 
 ## 技术栈
 

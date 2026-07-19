@@ -50,7 +50,7 @@ async function chooseVersion(current) {
     console.log(`3) 次版本       ${candidates.minor}`);
     console.log(`4) 主版本       ${candidates.major}`);
     console.log("5) 自定义版本（支持 1.2.3-beta.1）");
-    const answer = (await prompt.question("选择发布版本 [1]: ")).trim() || "1";
+    const answer = (await prompt.question("选择发布版本 [2]: ")).trim() || "2";
     if (answer === "1") return current;
     if (answer === "2") return candidates.patch;
     if (answer === "3") return candidates.minor;
@@ -67,11 +67,7 @@ async function chooseVersion(current) {
 }
 
 function latestReleaseTag() {
-  try {
-    return output("git", ["describe", "--tags", "--abbrev=0", "--match", "v*"]);
-  } catch {
-    return null;
-  }
+  return output("git", ["tag", "--merged", "HEAD", "--list", "v*", "--sort=-v:refname"]).split(/\r?\n/)[0] || null;
 }
 
 function releaseNotes() {
@@ -92,11 +88,12 @@ async function updateReleaseMetadata(version, notes) {
   tauriConfig.version = version;
   const urls = expectedUrls(version);
   Object.assign(versionManifest, { version, notes, ...urls });
+  const cargoVersionPattern = /^(\[package\][\s\S]*?^version\s*=\s*)"[^"]+"/m;
+  if (!cargoVersionPattern.test(cargoToml)) fail("无法找到 src-tauri/Cargo.toml 的 package.version");
   const nextCargoToml = cargoToml.replace(
-    /^(\[package\][\s\S]*?^version\s*=\s*)"[^"]+"/m,
+    cargoVersionPattern,
     `$1"${version}"`,
   );
-  if (nextCargoToml === cargoToml) fail("无法更新 src-tauri/Cargo.toml 的 package.version");
   await Promise.all([
     writeFile(path.join(root, "package.json"), `${JSON.stringify(packageJson, null, 2)}\n`),
     writeFile(path.join(root, "src-tauri/tauri.conf.json"), `${JSON.stringify(tauriConfig, null, 2)}\n`),
