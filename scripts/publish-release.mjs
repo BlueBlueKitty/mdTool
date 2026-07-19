@@ -12,8 +12,11 @@ function fail(message) {
 }
 
 function run(command, args) {
-  const executable = process.platform === "win32" && command === "npm" ? "npm.cmd" : command;
-  execFileSync(executable, args, { cwd: root, stdio: "inherit" });
+  if (process.platform === "win32" && command === "npm") {
+    execFileSync("cmd.exe", ["/d", "/s", "/c", "npm", ...args], { cwd: root, stdio: "inherit" });
+    return;
+  }
+  execFileSync(command, args, { cwd: root, stdio: "inherit" });
 }
 
 function output(command, args) {
@@ -121,10 +124,10 @@ async function main() {
   const notes = releaseNotes();
   console.log("\n本次 Release 内容：");
   console.log(notes.map((note) => `- ${note}`).join("\n"));
-  await updateReleaseMetadata(version, notes);
-  await validateRelease(tag, root);
   run("npm", ["test"]);
   run("npm", ["run", "build"]);
+  await updateReleaseMetadata(version, notes);
+  await validateRelease(tag, root);
   run("git", ["add", "package.json", "version.json", "src-tauri/tauri.conf.json", "src-tauri/Cargo.toml"]);
   run("git", ["commit", "-m", `release: ${tag}`]);
   run("git", ["push", "origin", "main"]);
