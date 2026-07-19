@@ -12,7 +12,8 @@ function fail(message) {
 }
 
 function run(command, args) {
-  execFileSync(command, args, { cwd: root, stdio: "inherit" });
+  const executable = process.platform === "win32" && command === "npm" ? "npm.cmd" : command;
+  execFileSync(executable, args, { cwd: root, stdio: "inherit" });
 }
 
 function output(command, args) {
