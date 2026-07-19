@@ -45,20 +45,22 @@ async function chooseVersion(current) {
   const prompt = createInterface({ input: process.stdin, output: process.stdout });
   try {
     console.log(`当前版本：${current}`);
-    console.log(`1) 补丁版本  ${candidates.patch}`);
-    console.log(`2) 次版本    ${candidates.minor}`);
-    console.log(`3) 主版本    ${candidates.major}`);
-    console.log("4) 自定义版本（支持 1.2.3-beta.1）");
-    const answer = (await prompt.question("选择下一版本 [1]: ")).trim() || "1";
-    if (answer === "1") return candidates.patch;
-    if (answer === "2") return candidates.minor;
-    if (answer === "3") return candidates.major;
-    if (answer === "4") {
+    console.log(`1) 发布当前版本 ${current}`);
+    console.log(`2) 补丁版本     ${candidates.patch}`);
+    console.log(`3) 次版本       ${candidates.minor}`);
+    console.log(`4) 主版本       ${candidates.major}`);
+    console.log("5) 自定义版本（支持 1.2.3-beta.1）");
+    const answer = (await prompt.question("选择发布版本 [1]: ")).trim() || "1";
+    if (answer === "1") return current;
+    if (answer === "2") return candidates.patch;
+    if (answer === "3") return candidates.minor;
+    if (answer === "4") return candidates.major;
+    if (answer === "5") {
       const custom = (await prompt.question("输入版本号: ")).trim();
       if (!/^\d+\.\d+\.\d+(?:-[\w.-]+)?$/.test(custom)) fail("自定义版本必须为 X.Y.Z 或 X.Y.Z-beta.1");
       return custom;
     }
-    fail("请选择 1、2、3 或 4");
+    fail("请选择 1、2、3、4 或 5");
   } finally {
     prompt.close();
   }
