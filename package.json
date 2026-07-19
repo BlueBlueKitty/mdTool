@@ -9,7 +9,8 @@
     "tauri:dev": "tauri dev",
     "tauri:build": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-tauri.ps1",
     "build": "vue-tsc --noEmit && vite build",
-    "test": "vitest run",
+    "test": "vitest run && node --test tests/release-validation.test.mjs",
+    "release": "node scripts/publish-release.mjs",
     "test:watch": "vitest",
     "test:e2e": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-e2e.ps1"
   },

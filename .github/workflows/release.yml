@@ -1,0 +1,93 @@
+name: Release mdTool
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate release
+    runs-on: ubuntu-22.04
+    outputs:
+      release_body: ${{ steps.release_metadata.outputs.release_body }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - id: release_metadata
+        name: Validate release metadata
+        run: node scripts/validate-release.mjs "${GITHUB_REF_NAME}" --github-output
+      - run: npm test
+      - run: npm run build
+
+  publish:
+    name: Build ${{ matrix.name }}
+    needs: validate
+    runs-on: ${{ matrix.platform }}
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64
+            id: windows
+            platform: windows-latest
+            args: --bundles nsis
+            asset_pattern: "[name]_[version]_[arch][setup].[ext]"
+          - name: Linux x64
+            id: linux
+            platform: ubuntu-22.04
+            args: --bundles appimage,deb
+            asset_pattern: "[name]_[version]_[arch].[ext]"
+          - name: macOS universal
+            id: macos
+            platform: macos-latest
+            args: --target universal-apple-darwin --bundles dmg
+            asset_pattern: "[name]_[version]_universal.[ext]"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Linux build dependencies
+        if: matrix.id == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.id == 'macos' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ./src-tauri -> target
+      - run: npm ci
+      - name: Build bundles and publish Release assets
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: mdTool ${{ github.ref_name }}
+          releaseBody: ${{ needs.validate.outputs.release_body }}
+          releaseDraft: false
+          prerelease: false
+          args: ${{ matrix.args }}
+          releaseAssetNamePattern: ${{ matrix.asset_pattern }}
+          uploadUpdaterJson: false
+      - name: Upload Windows portable executable
+        if: matrix.id == 'windows'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = node -p "require('./package.json').version"
+          gh release upload "${env:GITHUB_REF_NAME}" "src-tauri/target/release/mdtool.exe#mdTool_${version}_x64.exe" --clobber
