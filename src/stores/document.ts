@@ -7,7 +7,7 @@ import { detectDiagnostics, editsForDiagnostics } from "../rules/diagnostics";
 import { safeFormulaEdits } from "../rules/formula";
 import { defaultRuleConfig, type RepairPlan, type RepairScope, type RepairSettings, type RepairTarget, type TextEdit, type TextSelection } from "../types";
 import { createRepairPlan, editsForPlan } from "../repair/planner";
-import { loadRepairSettings, saveRepairSettings } from "../repair/settings";
+import { loadRepairSettings, normalizeEnabledRuleIds, saveRepairSettings } from "../repair/settings";
 
 export const useDocumentStore = defineStore("document", () => {
   const text = ref(""); const fileName = ref("未命名.md"); const filePath = ref<string | null>(null); const baseline = ref(""); const selectedSectionId = ref<string>(); const selection = ref<TextSelection>({ from: 0, to: 0 }); const repairSettings = ref<RepairSettings>(loadRepairSettings()); const history = new TextHistory(); const revision = ref(0);
@@ -28,6 +28,6 @@ export const useDocumentStore = defineStore("document", () => {
   function setSelection(next: TextSelection) { selection.value = { from: Math.max(0, next.from), to: Math.min(text.value.length, next.to) }; }
   function buildRepairPlan(scope: RepairScope, target: RepairTarget): RepairPlan { return createRepairPlan(text.value, revision.value, defaultRuleConfig, { scope, target, selection: selection.value, settings: repairSettings.value }); }
   function applyRepairPlan(plan: RepairPlan, selectedIds: string[], label = "应用修复计划") { if (plan.source !== text.value || plan.revision !== revision.value) throw new Error("修复计划已过期：文档已变化，请重新生成预览"); const edits = editsForPlan(plan, selectedIds); if (!edits.length) throw new Error("请至少选择一项修复"); run(label, edits); }
-  function updateRepairSettings(next: RepairSettings) { const start = Math.min(6, Math.max(1, Math.trunc(next.sectionNumberStartLevel || 1))); const end = next.sectionNumberEndLevel === null ? null : Math.min(6, Math.max(start, Math.trunc(next.sectionNumberEndLevel || 6))); repairSettings.value = { enabledRuleIds: [...new Set(next.enabledRuleIds)], sectionNumberStartLevel: start, sectionNumberEndLevel: end }; saveRepairSettings(repairSettings.value); }
+  function updateRepairSettings(next: RepairSettings) { const start = Math.min(6, Math.max(1, Math.trunc(next.sectionNumberStartLevel || 1))); const end = next.sectionNumberEndLevel === null ? null : Math.min(6, Math.max(start, Math.trunc(next.sectionNumberEndLevel || 6))); repairSettings.value = { enabledRuleIds: normalizeEnabledRuleIds(next.enabledRuleIds), sectionNumberStartLevel: start, sectionNumberEndLevel: end }; saveRepairSettings(repairSettings.value); }
   return { text, fileName, filePath, baseline, sections, diagnostics, selectedSectionId, selectedSection, selection, repairSettings, revision, dirty, history, replace, loadDocument, loadPastedDocument, run, undo, undoTo, redo, applySafeFixes, preview, markSaved, setSelection, buildRepairPlan, applyRepairPlan, updateRepairSettings };
 });

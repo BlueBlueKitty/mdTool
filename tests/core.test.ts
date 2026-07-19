@@ -12,12 +12,24 @@ import { repairRules } from "../src/repair/registry";
 import { formulaRuleEdits } from "../src/rules/formula";
 import { spacingRuleEdits } from "../src/rules/spacing";
 import { isSupportedTextPath } from "../src/services/nativeFiles";
+import { defaultRepairSettings, normalizeEnabledRuleIds } from "../src/repair/settings";
 
 const repairSettings = { enabledRuleIds: repairRules.map(rule => rule.id), sectionNumberStartLevel: 1, sectionNumberEndLevel: null };
 
 describe("补丁事务", () => {
   it("从后向前应用 Unicode 前后的多个补丁", () => expect(applyEdits("甲😀乙", [{ from: 0, to: 1, insert: "A" }, { from: 3, to: 4, insert: "B" }])).toBe("A😀B"));
   it("拒绝重叠补丁并支持整体撤销重做", () => { expect(validateEdits("abcd", [{ from: 0, to: 2, insert: "x" }, { from: 1, to: 3, insert: "y" }])).toHaveLength(1); const history = new TextHistory(); const result = history.apply("abcd", "修复", [{ from: 0, to: 4, insert: "ok" }]); expect(history.undo(result.text).text).toBe("abcd"); expect(history.redo("abcd").text).toBe("ok"); });
+});
+describe("修复规则默认值", () => {
+  it("仅默认恢复公式异常分隔线，并关闭全部中英文间距规则", () => {
+    const ids = defaultRepairSettings().enabledRuleIds;
+    expect(ids).toContain("formula-restore-separator");
+    expect(ids).not.toContain("formula-block-separator");
+    expect(repairRules.filter(rule => rule.category === "spacing").every(rule => !ids.includes(rule.id))).toBe(true);
+  });
+  it("读取或更新配置时也会消除互斥规则冲突", () => {
+    expect(normalizeEnabledRuleIds(["formula-block-separator", "formula-restore-separator"])).toEqual(["formula-restore-separator"]);
+  });
 });
 describe("文档基线与统一历史", () => {
   it("以空白文档启动，并在载入或粘贴时重置基线和历史", () => {
