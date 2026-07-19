@@ -1,8 +1,22 @@
 {
   "version": "0.1.0",
   "notes": [
-    "首个公开版本。",
-    "提供 Markdown 章节、公式与间距修复工作流。"
+    "fix: make release command work on Windows",
+    "🐞 fix: 修复发布脚本无法识别npm的bug",
+    "🐞 fix: 修复发布失败bug",
+    "🐞 fix: 修复发布时不能选择当前版本的bug",
+    "✨ feat: 增加一键发布命令",
+    "🎈 perf: 界面美化",
+    "✨ feat: 新增检查更新功能",
+    "🐞 fix: 修复很多bug，已接近可用",
+    "📃 docs: 增加readme",
+    "🐞 fix: 修复源码和预览滚动位置不同步的问题",
+    "🐞 fix: 修复公式无法渲染的bug",
+    "🐞 fix: 美化界面显示",
+    "🐞 fix: 增删修复规则",
+    "🐞 fix: 优化界面，修复bug",
+    "✨ feat: 界面重构",
+    "🎉 init: demo完成"
   ],
   "releaseUrl": "https://github.com/BlueBlueKitty/mdTool/releases/tag/v0.1.0",
   "downloads": {
